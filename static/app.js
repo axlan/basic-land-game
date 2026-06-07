@@ -200,6 +200,66 @@ class BasicLandGameScene extends Phaser.Scene {
     }
   }
 
+  // Render a player's active zone as grouped stacks, one per land type.
+  // centreX is the horizontal midpoint of the zone, zoneWidth is the
+  // total horizontal space available, baseY is the vertical centre of a card.
+  drawActiveZone(cards, baseY, targetableIds) {
+    if (!cards || cards.length === 0) return;
+
+    // Group by land type, preserving insertion order
+    const groups = {};
+    const ORDER = ['forest', 'island', 'mountain', 'plains', 'swamp'];
+    ORDER.forEach(t => { groups[t] = []; });
+    cards.forEach(c => {
+      if (!groups[c.land_type]) groups[c.land_type] = [];
+      groups[c.land_type].push(c);
+    });
+
+    // Keep only types that actually appear
+    const types = ORDER.filter(t => groups[t].length > 0);
+    const numStacks = types.length;
+
+    // Horizontal positions for each stack (same helper used elsewhere)
+    const stackX = getCardXCoordinates(490, 600, numStacks, 90);
+
+    types.forEach((type, stackIdx) => {
+      const stack = groups[type];
+      const cx = stackX[stackIdx];
+
+      // Vertical offset per card within the stack (peek effect)
+      const peekStep = 10;  // px between successive cards
+      const stackTop = baseY - (stack.length - 1) * peekStep / 2;
+
+      stack.forEach((c, cardIdx) => {
+        const isTargetable = targetableIds.has(c.card_id);
+        const yPos = stackTop + cardIdx * peekStep;
+        const card = new CardUI(this, cx, yPos, c.land_type, c.card_id, true, false, isTargetable);
+        card.setDepth(cardIdx);
+        this.cardsGroup.add(card);
+      });
+
+      // Count badge — only shown when stack has more than 1 card
+      if (stack.length > 1) {
+        const badgeBg = this.add.graphics();
+        badgeBg.fillStyle(0x1e1b4b, 0.92);
+        badgeBg.lineStyle(1.5, 0x818cf8, 0.85);
+        badgeBg.fillRoundedRect(cx + 28, baseY - 54, 22, 22, 6);
+        badgeBg.strokeRoundedRect(cx + 28, baseY - 54, 22, 22, 6);
+        badgeBg.setDepth(1001);
+        this.cardsGroup.add(badgeBg);
+
+        const badge = this.add.text(cx + 39, baseY - 43, `${stack.length}`, {
+          fontSize: '12px',
+          fontFamily: 'Outfit, sans-serif',
+          fontStyle: 'bold',
+          fill: '#a5b4fc'
+        }).setOrigin(0.5);
+        badge.setDepth(1002);
+        this.cardsGroup.add(badge);
+      }
+    });
+  }
+
   createCardTexture(key, colorHex) {
     const w = 90;
     const h = 130;
@@ -303,12 +363,7 @@ class BasicLandGameScene extends Phaser.Scene {
 
     // Opponent Active lands
     const oppActive = oppData.active || [];
-    const oppActiveX = getCardXCoordinates(490, 600, oppActive.length, 90);
-    oppActive.forEach((c, idx) => {
-      const isTargetable = targetableIds.has(c.card_id);
-      const card = new CardUI(this, oppActiveX[idx], 240, c.land_type, c.card_id, true, false, isTargetable);
-      this.cardsGroup.add(card);
-    });
+    this.drawActiveZone(oppActive, 240, targetableIds);
 
     // Opponent Graveyard
     const oppGY = oppData.graveyard || [];
@@ -362,12 +417,7 @@ class BasicLandGameScene extends Phaser.Scene {
 
     // Player Active lands
     const myActive = myData.active || [];
-    const myActiveX = getCardXCoordinates(490, 600, myActive.length, 90);
-    myActive.forEach((c, idx) => {
-      const isTargetable = targetableIds.has(c.card_id);
-      const card = new CardUI(this, myActiveX[idx], 460, c.land_type, c.card_id, true, false, isTargetable);
-      this.cardsGroup.add(card);
-    });
+    this.drawActiveZone(myActive, 460, targetableIds);
 
     // Player Hand
     const myHand = gameState.my_hand || [];
@@ -749,10 +799,11 @@ function onGameStateUpdate(state) {
   } else {
     banner.textContent = 'GAME OVER';
     banner.className = 'turn-over';
-    
-    // Announce winner
-    if (state.winner_name) {
-      showToast(`Game Over! Winner: ${state.winner_name}`, 'success');
+
+    // Show the game-over overlay (deduplicated — only once per game)
+    if (!document.getElementById('game-over-overlay').dataset.shown) {
+      document.getElementById('game-over-overlay').dataset.shown = '1';
+      showGameOverOverlay(state);
     }
   }
 
@@ -1053,6 +1104,84 @@ function appendEvents(events) {
   list.scrollTop = list.scrollHeight;
 }
 
+// ==========================================
+// Game-over overlay
+// ==========================================
+function showGameOverOverlay(state) {
+  const overlay = document.getElementById('game-over-overlay');
+  const title   = document.getElementById('game-over-title');
+  const reason  = document.getElementById('game-over-reason');
+
+  const myName = playerName || 'You';
+  const isWinner = state.winner_name === myName;
+
+  if (isWinner) {
+    title.textContent = 'VICTORY';
+    title.style.background = 'linear-gradient(90deg, #fbbf24, #f59e0b)';
+    title.style.webkitBackgroundClip = 'text';
+    title.style.webkitTextFillColor = 'transparent';
+    reason.textContent = 'Congratulations — you won the match!';
+  } else {
+    title.textContent = 'DEFEAT';
+    title.style.background = 'linear-gradient(90deg, #f87171, #dc2626)';
+    title.style.webkitBackgroundClip = 'text';
+    title.style.webkitTextFillColor = 'transparent';
+    reason.textContent = state.winner_name
+      ? `${state.winner_name} has won the match.`
+      : 'The game has ended.';
+  }
+
+  overlay.style.display = 'block';
+}
+
+function returnToLobby() {
+  const overlay = document.getElementById('game-over-overlay');
+  overlay.style.display = 'none';
+  delete overlay.dataset.shown;
+
+  // Close the game WS and clear game state — keep the player token
+  if (gameWs) {
+    gameWs.close();
+    gameWs = null;
+  }
+  stopGamePing();
+
+  localStorage.removeItem('basic_land_game_id');
+  gameId    = null;
+  gameState = null;
+  selectedCardsInHand = [];
+  selectedTargetCard  = null;
+
+  // Transition screens
+  document.getElementById('game-screen').classList.add('hidden');
+  document.getElementById('lobby-screen').classList.remove('hidden');
+
+  // Put the player back in the waiting lobby
+  apiCall('/lobby/join', 'POST', { name: playerName })
+    .then(data => {
+      playerToken = data.player_token;
+      playerId    = data.player_id;
+      playerName  = data.name;
+      localStorage.setItem('basic_land_player_token', playerToken);
+      localStorage.setItem('basic_land_player_id', playerId);
+      localStorage.setItem('basic_land_player_name', playerName);
+
+      document.getElementById('join-form').style.display = 'none';
+      document.getElementById('lobby-panel').style.display = 'block';
+      document.getElementById('player-profile-name').textContent = playerName;
+
+      initLobbyWs();
+      refreshLobby();
+      showToast(`Back in the lobby as ${playerName}!`, 'success');
+    })
+    .catch(err => {
+      // Name may already be taken (e.g. same server session) — fall back to join form
+      showToast(err.message || 'Could not re-join lobby. Please re-register.', 'error');
+      document.getElementById('join-form').style.display = 'block';
+      document.getElementById('lobby-panel').style.display = 'none';
+    });
+}
+
 // Forfeit and clean up
 function forfeitAndExit() {
   if (confirm('Are you sure you want to forfeit/exit the game? This will reset your session.')) {
@@ -1117,6 +1246,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-refresh-lobby').onclick = refreshLobby;
   document.getElementById('btn-leave-lobby').onclick = leaveLobby;
   document.getElementById('btn-exit-game').onclick = forfeitAndExit;
+  document.getElementById('btn-return-lobby').onclick = returnToLobby;
 
   // Lobby username Enter key bind
   document.getElementById('username-input').addEventListener('keypress', (e) => {

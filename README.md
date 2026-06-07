@@ -17,6 +17,5 @@ PLAY_OR_PASS
 `uvicorn server:app --reload --port 8000`
 
 TODO:
-Add button to exit after game ends
-Stack cards of the same type in active zone
-
+Password for match making
+Have tests use public API.

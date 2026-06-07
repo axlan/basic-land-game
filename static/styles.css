@@ -580,3 +580,33 @@ input[type="text"]:focus {
   border-color: var(--accent-red);
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 10px rgba(248, 113, 113, 0.2);
 }
+
+/* ==========================================
+   GAME OVER OVERLAY
+   ========================================== */
+
+/* Full-screen dimmed backdrop rendered behind the panel */
+#game-over-overlay {
+  animation: overlayPop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+#game-over-overlay::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: -1;
+}
+
+@keyframes overlayPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
