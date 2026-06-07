@@ -1,0 +1,667 @@
+#!/usr/bin/env python3
+
+"""
+Basic Land Game — FastAPI Server
+=================================
+
+REST endpoints
+--------------
+POST /lobby/join              Register a player name and enter the lobby.
+GET  /lobby/waiting           List names currently waiting for an opponent.
+POST /lobby/challenge         Challenge a waiting player → creates a game, returns game_id.
+DELETE /lobby/leave           Leave the lobby without starting a game.
+
+Game endpoints (all require ?player_token=<token>)
+---------------------------------------------------
+GET  /games/{game_id}/state   Return the game state visible to this player.
+POST /games/{game_id}/action  Submit a game action.
+
+WebSocket
+---------
+WS   /lobby/ws?player_token=<token>
+     Lobby-level events: opponent joined, challenge received, game started.
+
+WS   /games/{game_id}/ws?player_token=<token>
+     Game-level push. Also accepts action JSON from the client.
+
+Authentication
+--------------
+On /lobby/join the server returns a player_token (opaque UUID).  Every
+subsequent request and WebSocket connection must supply this token.  The
+token identifies the player and determines which player_id (0 or 1) they
+are in a given game.
+
+Wire formats
+------------
+All messages (REST responses and WebSocket pushes) are JSON.  WebSocket
+messages are always objects with a "type" discriminator field.
+
+WebSocket message types (server → client):
+  lobby_update      — waiting list changed
+  game_started      — a game was created; contains game_id
+  game_state        — full game state snapshot (after every action)
+  action_result     — success/failure of the last action submitted
+  pong              — response to a client "ping" keepalive
+  error             — something went wrong
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from game_board import (
+    ActionResult,
+    ActionType,
+    BasicLandGame,
+    GameAction,
+    GamePhase,
+)
+
+# ===========================================================================
+# Application
+# ===========================================================================
+
+app = FastAPI(
+    title="Basic Land Game Server",
+    description="Multiplayer server for the Basic Land Game (MTG variant)",
+    version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ===========================================================================
+# In-memory store  (swap for a real DB in production)
+# ===========================================================================
+
+class PlayerRecord:
+    """Runtime record for a connected player."""
+    def __init__(self, name: str):
+        self.player_id:  str           = str(uuid.uuid4())
+        self.token:      str           = str(uuid.uuid4())
+        self.name:       str           = name
+        self.game_id:    Optional[str] = None   # set when in a game
+        self.game_seat:  Optional[int] = None   # 0 or 1
+
+
+class GameRecord:
+    """Container for a running game and its WebSocket connections."""
+    def __init__(self, game_id: str, player0: PlayerRecord, player1: PlayerRecord):
+        self.game_id:  str           = game_id
+        self.players:  list[PlayerRecord] = [player0, player1]
+        self.game:     BasicLandGame = BasicLandGame()
+        # seat index → list of open WebSocket connections (reconnects allowed)
+        self.ws_connections: dict[int, list[WebSocket]] = {0: [], 1: []}
+        # Track how many event-log entries each seat has already received
+        self.log_sent: dict[int, int] = {0: 0, 1: 0}
+
+
+# Global in-process store
+_players_by_token:  dict[str, PlayerRecord]       = {}  # token   → record
+_waiting_players:   dict[str, PlayerRecord]       = {}  # pid     → record
+_games:             dict[str, GameRecord]         = {}  # game_id → record
+_lobby_connections: dict[str, list[WebSocket]]    = {}  # pid     → ws list
+
+
+# ===========================================================================
+# Internal helpers
+# ===========================================================================
+
+def _require_player(token: str) -> PlayerRecord:
+    p = _players_by_token.get(token)
+    if p is None:
+        raise HTTPException(status_code=401, detail="Invalid player token.")
+    return p
+
+
+def _require_game(game_id: str) -> GameRecord:
+    g = _games.get(game_id)
+    if g is None:
+        raise HTTPException(status_code=404, detail=f"Game {game_id} not found.")
+    return g
+
+
+def _seat_of(record: GameRecord, player: PlayerRecord) -> int:
+    for i, p in enumerate(record.players):
+        if p.player_id == player.player_id:
+            return i
+    raise HTTPException(status_code=403, detail="You are not in this game.")
+
+
+def _whose_turn_label(record: GameRecord, seat: int) -> str:
+    """Return 'you', 'opponent', or 'game_over' from this seat's perspective."""
+    game = record.game
+    if game.phase == GamePhase.GAME_OVER:
+        return "game_over"
+    if game.phase == GamePhase.AWAIT_COUNTER:
+        # Non-active player decides whether to counter
+        return "you" if seat != game.active_player_idx else "opponent"
+    return "you" if seat == game.active_player_idx else "opponent"
+
+
+def _winner_name(record: GameRecord) -> Optional[str]:
+    if record.game.winner is None:
+        return None
+    return record.players[record.game.winner].name
+
+
+def _public_state_for(record: GameRecord, seat: int) -> dict:
+    """
+    Build the state payload for a given seat.
+    Own hand is fully visible; opponent's hand shows only size + revealed cards.
+    New event-log entries since the last call are included.
+    """
+    game  = record.game
+    base  = game.public_state()
+
+    # Add player names
+    for i, ps in enumerate(base["players"]):
+        ps["name"] = record.players[i].name
+
+    # Private hand for this seat
+    base["my_seat"] = seat
+    base["my_hand"] = game.player_hand(seat)
+
+    # Convenience: whose turn it is from this seat's perspective
+    base["whose_turn"]   = _whose_turn_label(record, seat)
+    base["winner_name"]  = _winner_name(record)
+
+    # Incremental event log
+    base["new_events"]  = game.event_log[record.log_sent[seat]:]
+    record.log_sent[seat] = len(game.event_log)
+
+    return base
+
+
+async def _push_game_state(record: GameRecord) -> None:
+    """Push a game_state message to every connected WebSocket in this game."""
+    for seat in (0, 1):
+        payload = {
+            "type":  "game_state",
+            "state": _public_state_for(record, seat),
+        }
+        dead: list[WebSocket] = []
+        for ws in list(record.ws_connections[seat]):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            record.ws_connections[seat].remove(ws)
+
+
+async def _push_lobby_update() -> None:
+    """Broadcast the current waiting list to all lobby WebSocket connections."""
+    waiting = [
+        {"player_id": p.player_id, "name": p.name}
+        for p in _waiting_players.values()
+    ]
+    payload = {"type": "lobby_update", "waiting": waiting}
+    dead_players: list[str] = []
+    for pid, ws_list in list(_lobby_connections.items()):
+        dead_ws: list[WebSocket] = []
+        for ws in list(ws_list):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead_ws.append(ws)
+        for ws in dead_ws:
+            ws_list.remove(ws)
+        if not ws_list:
+            dead_players.append(pid)
+    for pid in dead_players:
+        _lobby_connections.pop(pid, None)
+
+
+# ===========================================================================
+# Pydantic models
+# ===========================================================================
+
+class JoinRequest(BaseModel):
+    name: str
+
+class JoinResponse(BaseModel):
+    player_id:    str
+    player_token: str
+    name:         str
+
+class WaitingPlayer(BaseModel):
+    player_id: str
+    name:      str
+
+class WaitingListResponse(BaseModel):
+    waiting: list[WaitingPlayer]
+
+class ChallengeRequest(BaseModel):
+    opponent_player_id: str
+
+class ChallengeResponse(BaseModel):
+    game_id:       str
+    your_seat:     int
+    opponent_name: str
+    message:       str
+
+class ActionRequest(BaseModel):
+    action_type:            str
+    card_id:                Optional[str] = None
+    counter_second_card_id: Optional[str] = None
+    target_card_id:         Optional[str] = None
+
+class ActionResponse(BaseModel):
+    success:   bool
+    message:   str
+    new_state: dict
+
+
+# ===========================================================================
+# Action-type lookup (accepts any case)
+# ===========================================================================
+
+_ACTION_MAP: dict[str, ActionType] = {at.name.upper(): at for at in ActionType}
+
+
+def _parse_action_type(raw: str) -> ActionType:
+    at = _ACTION_MAP.get(raw.upper())
+    if at is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown action_type '{raw}'. Valid: {sorted(_ACTION_MAP.keys())}",
+        )
+    return at
+
+# ===========================================================================
+# Lobby — REST
+# ===========================================================================
+
+@app.post("/lobby/join", response_model=JoinResponse, tags=["Lobby"])
+async def join_lobby(body: JoinRequest):
+    """
+    Register a display name and enter the waiting lobby.
+    Returns a **player_token** — keep this secret and include it with every
+    subsequent request as ?player_token=<token>.
+
+    A player should call this only once per session.  Calling it again creates
+    a new independent identity.
+    """
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name must not be blank.")
+    if len(name) > 32:
+        raise HTTPException(status_code=400, detail="Name must be ≤ 32 characters.")
+
+    for p in _waiting_players.values():
+        if p.name.lower() == name.lower():
+            raise HTTPException(
+                status_code=409,
+                detail=f"The name '{name}' is already taken in the lobby.",
+            )
+
+    record = PlayerRecord(name=name)
+    _players_by_token[record.token] = record
+    _waiting_players[record.player_id] = record
+
+    await _push_lobby_update()
+
+    return JoinResponse(
+        player_id=record.player_id,
+        player_token=record.token,
+        name=record.name,
+    )
+
+
+@app.get("/lobby/waiting", response_model=WaitingListResponse, tags=["Lobby"])
+async def list_waiting(player_token: str = Query(...)):
+    """List all players currently waiting for an opponent."""
+    _require_player(player_token)
+    return WaitingListResponse(
+        waiting=[
+            WaitingPlayer(player_id=p.player_id, name=p.name)
+            for p in _waiting_players.values()
+        ]
+    )
+
+
+@app.post("/lobby/challenge", response_model=ChallengeResponse, tags=["Lobby"])
+async def challenge_opponent(body: ChallengeRequest, player_token: str = Query(...)):
+    """
+    Challenge a waiting player by their **player_id**.
+    Both players are immediately removed from the lobby and a new game is
+    created.  The challenger is assigned seat 0; the opponent seat 1.
+    Which seat actually goes first is determined randomly by the game engine.
+
+    The opponent will receive a **game_started** message on their lobby
+    WebSocket connection if they have one open.
+    """
+    challenger = _require_player(player_token)
+
+    if challenger.game_id is not None:
+        raise HTTPException(status_code=409, detail="You are already in a game.")
+
+    opponent = _waiting_players.get(body.opponent_player_id)
+    if opponent is None:
+        raise HTTPException(status_code=404, detail="Opponent not found in lobby.")
+    if opponent.player_id == challenger.player_id:
+        raise HTTPException(status_code=400, detail="You cannot challenge yourself.")
+
+    _waiting_players.pop(challenger.player_id, None)
+    _waiting_players.pop(opponent.player_id, None)
+
+    game_id = str(uuid.uuid4())
+    record  = GameRecord(game_id=game_id, player0=challenger, player1=opponent)
+    _games[game_id] = record
+
+    challenger.game_id   = game_id
+    challenger.game_seat = 0
+    opponent.game_id     = game_id
+    opponent.game_seat   = 1
+
+    # Notify opponent via their lobby WebSocket
+    for ws in list(_lobby_connections.get(opponent.player_id, [])):
+        try:
+            await ws.send_json({
+                "type":          "game_started",
+                "game_id":       game_id,
+                "your_seat":     1,
+                "opponent_name": challenger.name,
+            })
+        except Exception:
+            pass
+
+    await _push_lobby_update()
+
+    return ChallengeResponse(
+        game_id=game_id,
+        your_seat=0,
+        opponent_name=opponent.name,
+        message=f"Game started against {opponent.name}. You are seat 0.",
+    )
+
+
+@app.delete("/lobby/leave", tags=["Lobby"])
+async def leave_lobby(player_token: str = Query(...)):
+    """Remove yourself from the waiting lobby."""
+    player = _require_player(player_token)
+    removed = _waiting_players.pop(player.player_id, None)
+    if removed is None:
+        raise HTTPException(status_code=400, detail="You are not in the lobby.")
+    await _push_lobby_update()
+    return {"message": "Left the lobby."}
+
+
+# ===========================================================================
+# Game — REST
+# ===========================================================================
+
+@app.get("/games/{game_id}/state", tags=["Game"])
+async def get_game_state(game_id: str, player_token: str = Query(...)):
+    """
+    Return the current game state as seen by the requesting player.
+
+    The response includes:
+    - **my_hand** — the full private hand (card IDs + types)
+    - **players[n].active** / **graveyard** — public zones for both players
+    - **players[n].hand_size** — opponent's hand count
+    - **players[n].revealed_hand** — any hand cards the opponent has revealed
+    - **whose_turn** — `"you"` | `"opponent"` | `"game_over"`
+    - **phase** — current game phase
+    - **new_events** — event-log entries since the last call
+    """
+    player = _require_player(player_token)
+    record = _require_game(game_id)
+    seat   = _seat_of(record, player)
+    return _public_state_for(record, seat)
+
+
+@app.post("/games/{game_id}/action", response_model=ActionResponse, tags=["Game"])
+async def submit_action(
+    game_id: str,
+    body: ActionRequest,
+    player_token: str = Query(...),
+):
+    """
+    Submit a game action.  The server derives your seat from your player_token,
+    so you cannot act as the wrong player.
+
+    **action_type** (case-insensitive) — one of:
+    `PLAY_LAND`, `PASS_TURN`, `COUNTER_LAND`, `ALLOW_LAND`,
+    `MOUNTAIN_TARGET`, `FOREST_TARGET`, `SWAMP_DISCARD`, `PLAINS_TARGET`
+
+    After a successful action the server pushes a **game_state** message to
+    both players' game WebSocket connections.
+    """
+    player = _require_player(player_token)
+    record = _require_game(game_id)
+    seat   = _seat_of(record, player)
+
+    action_type = _parse_action_type(body.action_type)
+    game_action = GameAction(
+        action_type=action_type,
+        player_id=seat,
+        card_id=body.card_id,
+        counter_second_card_id=body.counter_second_card_id,
+        target_card_id=body.target_card_id,
+    )
+
+    result: ActionResult = record.game.apply_action(game_action)
+
+    # Push update to WebSocket clients (non-blocking)
+    asyncio.create_task(_push_game_state(record))
+
+    return ActionResponse(
+        success=result.success,
+        message=result.message,
+        new_state=_public_state_for(record, seat),
+    )
+
+
+# ===========================================================================
+# WebSocket — Lobby
+# ===========================================================================
+
+@app.websocket("/lobby/ws")
+async def lobby_ws(ws: WebSocket, player_token: str = Query(...)):
+    """
+    **Lobby push channel.**
+
+    Connect here after calling `/lobby/join`.  The server pushes:
+
+    | type | when |
+    |------|------|
+    | `lobby_update` | whenever the waiting-player list changes |
+    | `game_started` | when an opponent challenges you |
+
+    The client may send the string `"ping"` to keep the connection alive;
+    the server replies with `{"type": "pong"}`.
+
+    Once a `game_started` message is received the client should open the
+    game WebSocket at `/games/{game_id}/ws`.
+    """
+    player = _players_by_token.get(player_token)
+    if player is None:
+        await ws.close(code=4001, reason="Invalid player token")
+        return
+
+    await ws.accept()
+    _lobby_connections.setdefault(player.player_id, []).append(ws)
+
+    # Immediately send the current waiting list
+    waiting = [
+        {"player_id": p.player_id, "name": p.name}
+        for p in _waiting_players.values()
+    ]
+    await ws.send_json({"type": "lobby_update", "waiting": waiting})
+
+    try:
+        while True:
+            data = await ws.receive_text()
+            if data.strip().lower() == "ping":
+                await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        lst = _lobby_connections.get(player.player_id, [])
+        if ws in lst:
+            lst.remove(ws)
+
+
+# ===========================================================================
+# WebSocket — Game
+# ===========================================================================
+
+@app.websocket("/games/{game_id}/ws")
+async def game_ws(
+    game_id: str,
+    ws: WebSocket,
+    player_token: str = Query(...),
+):
+    """
+    **Game push channel.**
+
+    Connect here after a game is created.  The server pushes a `game_state`
+    message:
+    - immediately on connect (full state snapshot)
+    - after every action (to both players)
+
+    The client may also **submit actions** over this socket instead of (or in
+    addition to) the REST endpoint.  Send a JSON object with the same fields
+    as the REST `ActionRequest`:
+
+    ```json
+    {
+      "action_type": "PLAY_LAND",
+      "card_id": "<uuid>"
+    }
+    ```
+
+    The server replies with an `action_result` message (only to the sender),
+    then broadcasts a `game_state` to all connected clients in the game.
+
+    Reconnection is supported — the server keeps sending new events and
+    the full state on every push.
+    """
+    player = _players_by_token.get(player_token)
+    if player is None:
+        await ws.close(code=4001, reason="Invalid player token")
+        return
+
+    record = _games.get(game_id)
+    if record is None:
+        await ws.close(code=4004, reason="Game not found")
+        return
+
+    seat = None
+    for i, p in enumerate(record.players):
+        if p.player_id == player.player_id:
+            seat = i
+            break
+    if seat is None:
+        await ws.close(code=4003, reason="You are not in this game")
+        return
+
+    await ws.accept()
+    record.ws_connections[seat].append(ws)
+
+    # Send full state immediately (handles reconnect case too)
+    await ws.send_json({
+        "type":  "game_state",
+        "state": _public_state_for(record, seat),
+    })
+
+    try:
+        while True:
+            raw = await ws.receive_json()
+
+            # Keepalive
+            if raw.get("type") == "ping" or raw.get("action_type") is None:
+                await ws.send_json({"type": "pong"})
+                continue
+
+            # Parse and apply action
+            try:
+                action_type = _parse_action_type(raw["action_type"])
+            except HTTPException as e:
+                await ws.send_json({"type": "error", "message": e.detail})
+                continue
+
+            game_action = GameAction(
+                action_type=action_type,
+                player_id=seat,
+                card_id=raw.get("card_id"),
+                counter_second_card_id=raw.get("counter_second_card_id"),
+                target_card_id=raw.get("target_card_id"),
+            )
+
+            result: ActionResult = record.game.apply_action(game_action)
+
+            # Acknowledge to the sender
+            await ws.send_json({
+                "type":    "action_result",
+                "success": result.success,
+                "message": result.message,
+                "events":  result.events,
+            })
+
+            # Broadcast updated state to both players
+            await _push_game_state(record)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        try:
+            await ws.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            pass
+    finally:
+        lst = record.ws_connections.get(seat, [])
+        if ws in lst:
+            lst.remove(ws)
+
+
+# ===========================================================================
+# Health / meta
+# ===========================================================================
+
+@app.get("/health", tags=["Meta"])
+async def health():
+    """Server health check and quick stats."""
+    return {
+        "status":          "ok",
+        "waiting_players": len(_waiting_players),
+        "active_games":    len(_games),
+    }
+
+
+# ===========================================================================
+# Static files
+# ===========================================================================
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/", tags=["Meta"])
+async def serve_index():
+    """Serve the game frontend."""
+    index_path = os.path.join("static", "index.html")
+    return FileResponse(index_path)
+
+
+# ===========================================================================
+# Entry point
+# ===========================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

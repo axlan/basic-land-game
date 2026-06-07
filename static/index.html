@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic Land Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div id="app">
+        <div id="game-container"></div>
+        <div id="ui-overlay">
+            <div id="name-input-modal" class="modal hidden">
+                <div class="modal-content">
+                    <h2>Enter Your Name</h2>
+                    <input type="text" id="player-name-input" placeholder="Your name..." maxlength="32">
+                    <button id="join-button">Join Lobby</button>
+                </div>
+            </div>
+            <div id="status-text" class="status-text"></div>
+        </div>
+    </div>
+    <script src="/static/api-client.js"></script>
+    <script src="/static/game.js"></script>
+</body>
+</html>
