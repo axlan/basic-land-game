@@ -457,6 +457,11 @@ async def submit_action(
 
     result: ActionResult = record.game.apply_action(game_action)
 
+    if result.success and record.game.phase == GamePhase.GAME_OVER:
+        for p in record.players:
+            p.game_id = None
+            p.game_seat = None
+
     # Push update to WebSocket clients (non-blocking)
     asyncio.create_task(_push_game_state(record))
 
@@ -613,6 +618,11 @@ async def game_ws(
                 "message": result.message,
                 "events":  result.events,
             })
+
+            if result.success and record.game.phase == GamePhase.GAME_OVER:
+                for p in record.players:
+                    p.game_id = None
+                    p.game_seat = None
 
             # Broadcast updated state to both players
             await _push_game_state(record)

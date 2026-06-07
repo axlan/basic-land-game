@@ -1,27 +1,140 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Basic Land Game</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basic Land Game — Digital Edition</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <!-- Import Phaser 3 Engine via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 </head>
 <body>
-    <div id="app">
-        <div id="game-container"></div>
-        <div id="ui-overlay">
-            <div id="name-input-modal" class="modal hidden">
-                <div class="modal-content">
-                    <h2>Enter Your Name</h2>
-                    <input type="text" id="player-name-input" placeholder="Your name..." maxlength="32">
-                    <button id="join-button">Join Lobby</button>
-                </div>
-            </div>
-            <div id="status-text" class="status-text"></div>
-        </div>
+
+  <!-- ==========================================
+       LOBBY / JOIN SCREEN
+       ========================================== -->
+  <div id="lobby-screen" class="glass-panel">
+    <h1 class="title">BASIC LAND GAME</h1>
+    <p class="subtitle">A strategic MtG-variant of domain & resource management</p>
+    
+    <!-- Phase 1: Join / Register -->
+    <div id="join-form">
+      <div class="input-group">
+        <label for="username-input">Choose Your Display Name</label>
+        <input type="text" id="username-input" placeholder="Enter name (max 32 chars)..." maxlength="32">
+      </div>
+      <button id="btn-join-lobby" class="btn-primary">Enter Waiting Lobby</button>
     </div>
-    <script src="/static/api-client.js"></script>
-    <script src="/static/game.js"></script>
+
+    <!-- Phase 2: Wait & Challenge -->
+    <div id="lobby-panel" style="display: none;">
+      <div class="lobby-header">
+        <h3>Active Lobby</h3>
+        <span id="player-profile-name" style="font-weight: 600; color: var(--accent-purple);">Player</span>
+      </div>
+      
+      <div class="lobby-container">
+        <p class="strategy-title" style="margin-bottom: 0.5rem;">Waiting for Opponents</p>
+        <ul id="waiting-players-list" class="waiting-list">
+          <li class="empty-lobby">No other players are currently waiting.</li>
+        </ul>
+      </div>
+
+      <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+        <button id="btn-refresh-lobby" class="btn-secondary" style="flex: 1;">Refresh Lobby</button>
+        <button id="btn-leave-lobby" class="btn-secondary" style="border-color: rgba(248, 113, 113, 0.3); color: var(--accent-red); flex: 1;">Leave Lobby</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================
+       GAME SCREEN
+       ========================================== -->
+  <div id="game-screen" class="hidden">
+    <!-- Game Board (Phaser Canvas) -->
+    <div id="game-canvas-container">
+      <!-- Phaser Canvas will be injected here -->
+      <div id="toast-element" class="toast-msg">Placeholder Toast</div>
+    </div>
+
+    <!-- Sidebar Dashboard -->
+    <div id="game-sidebar" class="glass-panel">
+      <!-- Turn Indicator -->
+      <div id="turn-banner" class="turn-mine">YOUR TURN</div>
+
+      <!-- Match Stats & Phase -->
+      <div class="sidebar-section info-box">
+        <div class="info-row">
+          <span class="info-label">Game Phase:</span>
+          <span id="phase-indicator" class="info-value">PLAY OR PASS</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Turn Number:</span>
+          <span id="turn-indicator" class="info-value">1</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Opponent:</span>
+          <span id="opponent-name-indicator" class="info-value">Searching...</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Seat:</span>
+          <span id="seat-indicator" class="info-value">0</span>
+        </div>
+      </div>
+
+      <!-- Counter-Spell Auto Strategy -->
+      <div class="sidebar-section">
+        <p class="strategy-title">Counter Spell Strategy</p>
+        <div class="radio-group" id="strategy-radio-group">
+          <label class="radio-option selected">
+            <input type="radio" name="counter-strategy" value="always_prompt" checked>
+            <span>Always Prompt (Bluff)</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="counter-strategy" value="smart_prompt">
+            <span>Smart (Prompt if Island+1)</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="counter-strategy" value="always_pass">
+            <span>Always Pass (Auto-allow)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Action Panel -->
+      <div class="sidebar-section controls-grid">
+        <button id="btn-play-land" class="btn-action" disabled>Play Selected Land</button>
+        <button id="btn-pass-turn" class="btn-action" disabled>Pass Turn</button>
+        <div style="display: flex; gap: 0.5rem; width: 100%;">
+          <button id="btn-counter-play" class="btn-action" style="flex: 1;" disabled>Counter</button>
+          <button id="btn-allow-play" class="btn-action" style="flex: 1;" disabled>Allow</button>
+        </div>
+        <button id="btn-reset-selection" class="btn-action" disabled>Reset Selection</button>
+      </div>
+
+      <!-- Scrolling Event Log -->
+      <div class="sidebar-section event-log-container">
+        <p class="event-log-title">Battle Journal</p>
+        <ul id="event-log-list" class="event-log-list">
+          <li class="log-entry log-turn">Game initialized.</li>
+        </ul>
+      </div>
+
+      <!-- Exit Button -->
+      <button id="btn-exit-game" class="btn-danger-outline">Forfeit & Exit Game</button>
+    </div>
+  </div>
+
+  <!-- ==========================================
+       GAME OVER OVERLAY
+       ========================================== -->
+  <div id="game-over-overlay" class="glass-panel hidden" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10000; width: 400px; padding: 2.5rem; text-align: center; border-color: var(--accent-purple); box-shadow: 0 0 30px rgba(129, 140, 248, 0.4);">
+    <h2 id="game-over-title" style="font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; background: linear-gradient(90deg, #fbbf24, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">VICTORY</h2>
+    <p id="game-over-reason" style="color: var(--text-secondary); margin-bottom: 2rem; font-size: 1.1rem;">Your opponent has forfeited.</p>
+    <button id="btn-return-lobby" class="btn-primary">Return to Lobby</button>
+  </div>
+
+  <!-- Main client scripts -->
+  <script src="/static/app.js"></script>
 </body>
 </html>

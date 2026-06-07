@@ -231,7 +231,8 @@ def test_swamp_thoughtseize():
     assert target_card in opponent.graveyard
     # After discarding one card from a revealed hand, the remaining cards stay revealed
     # (5 cards revealed initially, 1 discarded, so 4 remain revealed)
-    assert len(opponent.revealed_card_ids) == revealed_after_swamp - 1
+    print(game.public_state())
+    assert len(game.public_state()['players'][opponent_idx]['revealed_hand']) == revealed_after_swamp - 1
     print("PASS test_swamp_thoughtseize")
 
 

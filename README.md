@@ -14,8 +14,9 @@ PLAY_OR_PASS
                                       └─ target action → advance turn
 ```
 
-python server.py                        # starts on :8000
-# or
-uvicorn server:app --reload --port 8000
+`uvicorn server:app --reload --port 8000`
 
-python3 -m http.server 8888
+TODO:
+Add button to exit after game ends
+Stack cards of the same type in active zone
+

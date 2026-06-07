@@ -73,6 +73,7 @@ class ActionType(Enum):
     FOREST_TARGET      = auto()   # Choose which graveyard land to return to hand
     SWAMP_DISCARD      = auto()   # Choose which opponent hand card to discard
     PLAINS_TARGET      = auto()   # Choose which of your active lands to copy
+    FORFEIT            = auto()   # Surrender the game
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +272,7 @@ class BasicLandGame:
             ActionType.FOREST_TARGET:   self._handle_forest_target,
             ActionType.SWAMP_DISCARD:   self._handle_swamp_discard,
             ActionType.PLAINS_TARGET:   self._handle_plains_target,
+            ActionType.FORFEIT:          self._handle_forfeit,
         }.get(action.action_type)
 
         if handler is None:
@@ -476,18 +478,22 @@ class BasicLandGame:
         if action.target_card_id is None:
             return ActionResult.fail("target_card_id is required.")
 
-        result = self._apply_plains(action)
-        if result.success:
-            # _apply_plains may have set up a secondary RESOLVE_EFFECT phase
-            # (e.g. Plains→Mountain still needs MOUNTAIN_TARGET).
-            # Only advance the turn if _apply_plains fully resolved everything
-            # (i.e. the phase is no longer RESOLVE_EFFECT and pending is cleared).
-            if self.phase != GamePhase.RESOLVE_EFFECT and self.phase != GamePhase.GAME_OVER:
-                self._pending_card = None
-                self._advance_turn()
-            # If phase == RESOLVE_EFFECT, _apply_plains left _pending_card pointing
-            # at the copied-effect land; the next action handler will resolve it.
-        return result
+        return self._apply_plains(action)
+
+    def _handle_forfeit(self, action: GameAction) -> ActionResult:
+        player_idx = action.player_id
+        opponent_idx = 1 - player_idx
+
+        self.winner = opponent_idx
+        self.phase = GamePhase.GAME_OVER
+        self._pending_card = None
+        self._log(f"Player {player_idx} has forfeited the game.")
+        self._log(f"Player {opponent_idx} wins!")
+
+        return ActionResult.ok(
+            f"Player {player_idx} forfeited. Player {opponent_idx} wins!",
+            events=list(self.event_log[-2:]),
+        )
 
     # ------------------------------------------------------------------
     # Land resolution
@@ -725,15 +731,9 @@ class BasicLandGame:
                 )
             else:
                 self._log(f"Copied Island: library is empty.")
+            self._pending_card = None
+            self._advance_turn()
             return ActionResult.ok("Plains→Island copy applied.", events=list(self.event_log[-3:]))
-
-        # For targeted effects, re-enter RESOLVE_EFFECT with the copied land type
-        # We swap the pending card's effective type by replacing _pending_card
-        # with a virtual reference — we store the copied-land target type so the
-        # next resolution handler knows what to do.
-        self._plains_copied_land = target.land_type
-        self._pending_card = target      # reuse target card so type checks pass
-        self.phase = GamePhase.RESOLVE_EFFECT
 
         # Check for empty targets just as _resolve_land does
         if target.land_type == LandType.MOUNTAIN:
@@ -741,8 +741,9 @@ class BasicLandGame:
             if not opponent.active:
                 self._log("Copied Mountain: opponent has no active lands.")
                 self._pending_card = None
+                self._advance_turn()
                 return ActionResult.ok(
-                    "Plains→Mountain: no target. Turn will advance.",
+                    "Plains→Mountain: no target. Turn advanced.",
                     events=list(self.event_log[-3:]),
                 )
 
@@ -751,8 +752,9 @@ class BasicLandGame:
             if not all_gy:
                 self._log("Copied Forest: no lands in graveyard.")
                 self._pending_card = None
+                self._advance_turn()
                 return ActionResult.ok(
-                    "Plains→Forest: no graveyard lands. Turn will advance.",
+                    "Plains→Forest: no graveyard lands. Turn advanced.",
                     events=list(self.event_log[-3:]),
                 )
 
@@ -761,8 +763,9 @@ class BasicLandGame:
             if not opponent.hand:
                 self._log("Copied Swamp: opponent hand is empty.")
                 self._pending_card = None
+                self._advance_turn()
                 return ActionResult.ok(
-                    "Plains→Swamp: opponent hand empty. Turn will advance.",
+                    "Plains→Swamp: opponent hand empty. Turn advanced.",
                     events=list(self.event_log[-3:]),
                 )
             for c in opponent.hand:
@@ -771,6 +774,14 @@ class BasicLandGame:
                 f"Copied Swamp: Player {player_idx} sees opponent's hand — "
                 f"{[c.land_type.value for c in opponent.hand]}."
             )
+
+        # For targeted effects, re-enter RESOLVE_EFFECT with the copied land type
+        # We swap the pending card's effective type by replacing _pending_card
+        # with a virtual reference — we store the copied-land target type so the
+        # next resolution handler knows what to do.
+        self._plains_copied_land = target.land_type
+        self._pending_card = target      # reuse target card so type checks pass
+        self.phase = GamePhase.RESOLVE_EFFECT
 
         prompts = {
             LandType.MOUNTAIN: "Provide MOUNTAIN_TARGET for Plains copy.",
