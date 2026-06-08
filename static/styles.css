@@ -284,18 +284,6 @@ input[type="text"]:focus {
   }
 }
 
-@media (orientation: portrait) {
-  #orientation-overlay {
-    display: flex;
-  }
-
-  #game-screen,
-  #lobby-screen,
-  #game-over-overlay {
-    visibility: hidden;
-  }
-}
-
 /* Sidebar Sections */
 .sidebar-section {
   background: rgba(15, 23, 42, 0.4);

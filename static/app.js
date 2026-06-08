@@ -576,9 +576,11 @@ class BasicLandGameScene extends Phaser.Scene {
 
 function updateOrientationUI() {
   const overlay = document.getElementById('orientation-overlay');
-
-  const isPortrait =
-    window.innerHeight > window.innerWidth;
+  // Use screen.orientation if available (more reliable than innerWidth/innerHeight
+  // which can be stale during orientation transitions on some mobile browsers)
+  const isPortrait = window.screen?.orientation
+    ? window.screen.orientation.type.startsWith('portrait')
+    : window.innerHeight > window.innerWidth;
 
   overlay.style.display = isPortrait ? 'flex' : 'none';
 }
@@ -1445,7 +1447,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  updateOrientationUI();
+  setTimeout(updateOrientationUI, 0);  // defer one tick
 
   window.addEventListener('resize', handleResize);
   window.addEventListener('orientationchange', handleResize);
