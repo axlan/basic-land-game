@@ -626,8 +626,14 @@ async function joinLobby() {
     return;
   }
 
+  const reservedForInput = document.getElementById('reserved-for-input');
+  const reservedForName = reservedForInput ? reservedForInput.value.trim() || null : null;
+
   try {
-    const data = await apiCall('/lobby/join', 'POST', { name });
+    const body = { name };
+    if (reservedForName) body.reserved_for_name = reservedForName;
+
+    const data = await apiCall('/lobby/join', 'POST', body);
     playerToken = data.player_token;
     playerId = data.player_id;
     playerName = data.name;
@@ -635,6 +641,11 @@ async function joinLobby() {
     localStorage.setItem('basic_land_player_token', playerToken);
     localStorage.setItem('basic_land_player_id', playerId);
     localStorage.setItem('basic_land_player_name', playerName);
+    if (reservedForName) {
+      localStorage.setItem('basic_land_reserved_for', reservedForName);
+    } else {
+      localStorage.removeItem('basic_land_reserved_for');
+    }
 
     showToast(`Registered successfully as ${playerName}!`, 'success');
     
@@ -642,6 +653,13 @@ async function joinLobby() {
     document.getElementById('join-form').style.display = 'none';
     document.getElementById('lobby-panel').style.display = 'block';
     document.getElementById('player-profile-name').textContent = playerName;
+
+    // Show reservation banner if a specific opponent was requested
+    const banner = document.getElementById('reservation-banner');
+    if (reservedForName && banner) {
+      document.getElementById('reservation-target-name').textContent = reservedForName;
+      banner.style.display = 'flex';
+    }
 
     // Connect to Lobby WS and fetch waiting list
     initLobbyWs();
@@ -681,6 +699,10 @@ async function leaveLobby() {
     playerName = null;
     gameId = null;
 
+    // Hide reservation banner
+    const banner = document.getElementById('reservation-banner');
+    if (banner) banner.style.display = 'none';
+
     if (lobbyWs) {
       lobbyWs.close();
       lobbyWs = null;
@@ -714,6 +736,16 @@ function updateWaitingList(waiting) {
     const nameSpan = document.createElement('span');
     nameSpan.className = 'waiting-name';
     nameSpan.textContent = p.name;
+
+    // Show a lock badge if this slot was reserved specifically for us
+    if (p.reserved_for_name) {
+      const badge = document.createElement('span');
+      badge.className = 'reserved-badge';
+      badge.title = `This player is waiting only for you`;
+      badge.textContent = '🔒 Private';
+      nameSpan.appendChild(badge);
+    }
+
     li.appendChild(nameSpan);
 
     const chalBtn = document.createElement('button');
@@ -1516,6 +1548,14 @@ async function checkLobbyReconstruction() {
       document.getElementById('join-form').style.display = 'none';
       document.getElementById('lobby-panel').style.display = 'block';
       document.getElementById('player-profile-name').textContent = playerName;
+
+      // Restore reservation banner if it was set before the page reload
+      const savedReservation = localStorage.getItem('basic_land_reserved_for');
+      const banner = document.getElementById('reservation-banner');
+      if (savedReservation && banner) {
+        document.getElementById('reservation-target-name').textContent = savedReservation;
+        banner.style.display = 'flex';
+      }
       
       initLobbyWs();
       updateWaitingList(data.waiting);

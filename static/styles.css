@@ -971,3 +971,54 @@ input[type="text"]:focus {
   font-size: 4rem;
   margin-bottom: 1rem;
 }
+
+/* ==========================================
+   JOIN FORM — reservation input hint
+   ========================================== */
+
+.input-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.35rem;
+  opacity: 0.8;
+}
+
+/* ==========================================
+   LOBBY — reservation banner & badge
+   ========================================== */
+
+.reservation-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  background: rgba(129, 140, 248, 0.08);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--accent-purple);
+  margin-bottom: 1rem;
+}
+
+.reservation-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.reservation-banner strong {
+  color: var(--text-primary);
+}
+
+.reserved-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(129, 140, 248, 0.15);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  color: var(--accent-purple);
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+}

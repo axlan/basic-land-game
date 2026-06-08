@@ -34,6 +34,11 @@
         <label for="username-input">Choose Your Display Name</label>
         <input type="text" id="username-input" placeholder="Enter name (max 32 chars)..." maxlength="32">
       </div>
+      <div class="input-group">
+        <label for="reserved-for-input">Play Against (optional)</label>
+        <input type="text" id="reserved-for-input" placeholder="Leave blank to appear to everyone..." maxlength="32">
+        <p class="input-hint">If set, only this player will see your lobby slot.</p>
+      </div>
       <button id="btn-join-lobby" class="btn-primary">Enter Waiting Lobby</button>
 
       <!-- Rules Accordion -->
@@ -98,6 +103,11 @@
       <div class="lobby-header">
         <h3>Active Lobby</h3>
         <span id="player-profile-name" style="font-weight: 600; color: var(--accent-purple);">Player</span>
+      </div>
+      
+      <div id="reservation-banner" class="reservation-banner" style="display: none;">
+        <span class="reservation-icon">🔒</span>
+        <span>Private slot — waiting for <strong id="reservation-target-name"></strong></span>
       </div>
       
       <div class="lobby-container">

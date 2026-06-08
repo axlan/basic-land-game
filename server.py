@@ -89,12 +89,13 @@ app.add_middleware(
 
 class PlayerRecord:
     """Runtime record for a connected player."""
-    def __init__(self, name: str):
-        self.player_id:  str           = str(uuid.uuid4())
-        self.token:      str           = str(uuid.uuid4())
-        self.name:       str           = name
-        self.game_id:    Optional[str] = None   # set when in a game
-        self.game_seat:  Optional[int] = None   # 0 or 1
+    def __init__(self, name: str, reserved_for_name: Optional[str] = None):
+        self.player_id:        str           = str(uuid.uuid4())
+        self.token:            str           = str(uuid.uuid4())
+        self.name:             str           = name
+        self.reserved_for_name: Optional[str] = reserved_for_name  # only this opponent can challenge
+        self.game_id:          Optional[str] = None   # set when in a game
+        self.game_seat:        Optional[int] = None   # 0 or 1
 
 
 class GameRecord:
@@ -203,15 +204,40 @@ async def _push_game_state(record: GameRecord) -> None:
             record.ws_connections[seat].remove(ws)
 
 
+def _visible_waiting(viewer: PlayerRecord) -> list[dict]:
+    """
+    Return the waiting-list entries visible to *viewer*.
+    A slot is visible when:
+      - it has no reservation (open challenge), OR
+      - its reservation names the viewer exactly (case-insensitive).
+    The viewer's own entry is always excluded.
+    """
+    result = []
+    for p in _waiting_players.values():
+        if p.player_id == viewer.player_id:
+            continue
+        if p.reserved_for_name is not None and \
+                p.reserved_for_name.lower() != viewer.name.lower():
+            continue
+        result.append({
+            "player_id":         p.player_id,
+            "name":              p.name,
+            "reserved_for_name": p.reserved_for_name,
+        })
+    return result
+
+
 async def _push_lobby_update() -> None:
-    """Broadcast the current waiting list to all lobby WebSocket connections."""
-    waiting = [
-        {"player_id": p.player_id, "name": p.name}
-        for p in _waiting_players.values()
-    ]
-    payload = {"type": "lobby_update", "waiting": waiting}
+    """Push a personalised waiting list to every connected lobby WebSocket."""
     dead_players: list[str] = []
     for pid, ws_list in list(_lobby_connections.items()):
+        viewer = next(
+            (p for p in _players_by_token.values() if p.player_id == pid), None
+        )
+        if viewer is None:
+            dead_players.append(pid)
+            continue
+        payload = {"type": "lobby_update", "waiting": _visible_waiting(viewer)}
         dead_ws: list[WebSocket] = []
         for ws in list(ws_list):
             try:
@@ -231,7 +257,8 @@ async def _push_lobby_update() -> None:
 # ===========================================================================
 
 class JoinRequest(BaseModel):
-    name: str
+    name:              str
+    reserved_for_name: Optional[str] = None  # if set, only this named player sees the slot
 
 class JoinResponse(BaseModel):
     player_id:    str
@@ -239,8 +266,9 @@ class JoinResponse(BaseModel):
     name:         str
 
 class WaitingPlayer(BaseModel):
-    player_id: str
-    name:      str
+    player_id:         str
+    name:              str
+    reserved_for_name: Optional[str] = None  # set when the slot is private
 
 class WaitingListResponse(BaseModel):
     waiting: list[WaitingPlayer]
@@ -295,12 +323,19 @@ async def join_lobby(body: JoinRequest):
 
     A player should call this only once per session.  Calling it again creates
     a new independent identity.
+
+    Pass **reserved_for_name** to create a private slot: only the player with
+    that display name will see your entry in the lobby.
     """
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name must not be blank.")
     if len(name) > 32:
         raise HTTPException(status_code=400, detail="Name must be ≤ 32 characters.")
+
+    reserved_for = body.reserved_for_name.strip() if body.reserved_for_name else None
+    if reserved_for and reserved_for.lower() == name.lower():
+        raise HTTPException(status_code=400, detail="You cannot reserve a slot for yourself.")
 
     for p in _waiting_players.values():
         if p.name.lower() == name.lower():
@@ -309,7 +344,7 @@ async def join_lobby(body: JoinRequest):
                 detail=f"The name '{name}' is already taken in the lobby.",
             )
 
-    record = PlayerRecord(name=name)
+    record = PlayerRecord(name=name, reserved_for_name=reserved_for)
     _players_by_token[record.token] = record
     _waiting_players[record.player_id] = record
 
@@ -324,12 +359,20 @@ async def join_lobby(body: JoinRequest):
 
 @app.get("/lobby/waiting", response_model=WaitingListResponse, tags=["Lobby"])
 async def list_waiting(player_token: str = Query(...)):
-    """List all players currently waiting for an opponent."""
-    _require_player(player_token)
+    """
+    List players currently waiting for an opponent, filtered for the caller.
+    Open slots (no reservation) are visible to everyone.
+    Reserved slots are only visible to the named opponent.
+    """
+    player = _require_player(player_token)
     return WaitingListResponse(
         waiting=[
-            WaitingPlayer(player_id=p.player_id, name=p.name)
-            for p in _waiting_players.values()
+            WaitingPlayer(
+                player_id=p["player_id"],
+                name=p["name"],
+                reserved_for_name=p["reserved_for_name"],
+            )
+            for p in _visible_waiting(player)
         ]
     )
 
@@ -355,6 +398,11 @@ async def challenge_opponent(body: ChallengeRequest, player_token: str = Query(.
         raise HTTPException(status_code=404, detail="Opponent not found in lobby.")
     if opponent.player_id == challenger.player_id:
         raise HTTPException(status_code=400, detail="You cannot challenge yourself.")
+    if opponent.reserved_for_name is not None and             opponent.reserved_for_name.lower() != challenger.name.lower():
+        raise HTTPException(
+            status_code=403,
+            detail=f"That player is waiting for a specific opponent.",
+        )
 
     _waiting_players.pop(challenger.player_id, None)
     _waiting_players.pop(opponent.player_id, None)
@@ -502,12 +550,8 @@ async def lobby_ws(ws: WebSocket, player_token: str = Query(...)):
     await ws.accept()
     _lobby_connections.setdefault(player.player_id, []).append(ws)
 
-    # Immediately send the current waiting list
-    waiting = [
-        {"player_id": p.player_id, "name": p.name}
-        for p in _waiting_players.values()
-    ]
-    await ws.send_json({"type": "lobby_update", "waiting": waiting})
+    # Immediately send the personalised waiting list for this player
+    await ws.send_json({"type": "lobby_update", "waiting": _visible_waiting(player)})
 
     try:
         while True:
