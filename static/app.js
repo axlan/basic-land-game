@@ -50,17 +50,21 @@ const _tooltip = (() => {
       el.querySelector('.tooltip-body').innerHTML = data.body;
       el.setAttribute('data-land', landType);
 
-      // Position above the card; canvasX/Y are canvas-relative pixels
       const canvas = document.querySelector('#game-canvas-container canvas');
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
 
-      const tipW = 200;
-      let left = rect.left + canvasX - tipW / 2;
-      let top  = rect.top  + canvasY - 85; // sit above the card
+      // Scale factor: rendered canvas size vs. Phaser's logical resolution
+      const scaleX = rect.width  / 960;
+      const scaleY = rect.height / 700;
 
-      // Keep inside viewport horizontally
-      left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+      const tipW = 200;
+      let left = rect.left + canvasX * scaleX - tipW / 2;
+      let top  = rect.top  + canvasY * scaleY - 85;
+
+      // Keep inside viewport
+      left = Math.max(8, Math.min(left, window.innerWidth  - tipW - 8));
+      top  = Math.max(8, Math.min(top,  window.innerHeight - 120  - 8));
 
       el.style.left = left + 'px';
       el.style.top  = top  + 'px';
@@ -494,10 +498,18 @@ class BasicLandGameScene extends Phaser.Scene {
 
     // Player Graveyard
     const myGY = myData.graveyard || [];
+    // Spread graveyard cards to 50% overlap when they are Forest targets
+    const isForestTargeting = gameState.phase === 'RESOLVE_EFFECT' &&
+      parsePendingPlay(gameState.pending_play)?.land_type === 'forest';
+    const myGYSpacing = isForestTargeting ? 65 : 15; // 65px = 50% of card height (130px)
+
     if (myGY.length > 0) {
-      const maxSpacing = 15;
-      const maxTotalHeight = 120;
-      const spacing = myGY.length > 1 ? Math.min(maxSpacing, maxTotalHeight / (myGY.length - 1)) : 0;
+      const maxTotalHeight = isForestTargeting
+        ? myGY.length * myGYSpacing          // allow full spread, no cap
+        : 120;                                // original compact cap
+      const spacing = myGY.length > 1
+        ? Math.min(myGYSpacing, maxTotalHeight / (myGY.length - 1))
+        : 0;
 
       myGY.forEach((c, idx) => {
         const isTargetable = targetableIds.has(c.card_id);
@@ -560,6 +572,15 @@ class BasicLandGameScene extends Phaser.Scene {
       this.cardsGroup.add(labelText);
     }
   }
+}
+
+function updateOrientationUI() {
+  const overlay = document.getElementById('orientation-overlay');
+
+  const isPortrait =
+    window.innerHeight > window.innerWidth;
+
+  overlay.style.display = isPortrait ? 'flex' : 'none';
 }
 
 // ==========================================
@@ -1289,13 +1310,37 @@ function forfeitAndExit() {
 function initPhaserGame() {
   const config = {
     type: Phaser.AUTO,
-    width: 960,
-    height: 700,
     parent: 'game-canvas-container',
+
+    scale: {
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+      width: 960,
+      height: 700
+    },
+
     backgroundColor: '#0f172a',
     scene: [BasicLandGameScene]
   };
+
   phaserGame = new Phaser.Game(config);
+}
+
+function handleResize() {
+  updateOrientationUI();
+
+  if (!phaserGame) {
+    return;
+  }
+
+  const container =
+    document.getElementById('game-canvas-container');
+
+  phaserGame.scale.refresh();
+
+  if (gameScene && gameScene.drawBoard) {
+    gameScene.drawBoard();
+  }
 }
 
 // ==========================================
@@ -1399,6 +1444,11 @@ document.addEventListener('DOMContentLoaded', () => {
       rulesBody.hidden = false;
     }
   });
+
+  updateOrientationUI();
+
+  window.addEventListener('resize', handleResize);
+  window.addEventListener('orientationchange', handleResize);
 
   // Reconnection Check on page load
   checkSessionReconstruction();

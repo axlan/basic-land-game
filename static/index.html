@@ -10,6 +10,17 @@
 </head>
 <body>
 
+  <div id="orientation-overlay">
+    <div class="orientation-content">
+      <div class="orientation-icon">📱</div>
+      <h2>Please Rotate Your Device</h2>
+      <p>
+        Basic Land Game is designed for landscape mode.
+        Rotate your phone or tablet to continue.
+      </p>
+    </div>
+  </div>
+
   <!-- ==========================================
        LOBBY / JOIN SCREEN
        ========================================== -->
@@ -118,24 +129,15 @@
       <!-- Turn Indicator -->
       <div id="turn-banner" class="turn-mine">YOUR TURN</div>
 
-      <!-- Match Stats & Phase -->
-      <div class="sidebar-section info-box">
-        <div class="info-row">
-          <span class="info-label">Game Phase:</span>
-          <span id="phase-indicator" class="info-value">PLAY OR PASS</span>
+      <!-- Action Panel -->
+      <div class="sidebar-section controls-grid">
+        <button id="btn-play-land" class="btn-action" disabled>Play Selected Land</button>
+        <button id="btn-pass-turn" class="btn-action" disabled>Pass Turn</button>
+        <div style="display: flex; gap: 0.5rem; width: 100%;">
+          <button id="btn-counter-play" class="btn-action" style="flex: 1;" disabled>Counter</button>
+          <button id="btn-allow-play" class="btn-action" style="flex: 1;" disabled>Allow</button>
         </div>
-        <div class="info-row">
-          <span class="info-label">Turn Number:</span>
-          <span id="turn-indicator" class="info-value">1</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Opponent:</span>
-          <span id="opponent-name-indicator" class="info-value">Searching...</span>
-        </div>
-        <div class="info-row">
-          <span class="info-label">Seat:</span>
-          <span id="seat-indicator" class="info-value">0</span>
-        </div>
+        <button id="btn-reset-selection" class="btn-action" disabled>Reset Selection</button>
       </div>
 
       <!-- Counter-Spell Auto Strategy -->
@@ -157,15 +159,24 @@
         </div>
       </div>
 
-      <!-- Action Panel -->
-      <div class="sidebar-section controls-grid">
-        <button id="btn-play-land" class="btn-action" disabled>Play Selected Land</button>
-        <button id="btn-pass-turn" class="btn-action" disabled>Pass Turn</button>
-        <div style="display: flex; gap: 0.5rem; width: 100%;">
-          <button id="btn-counter-play" class="btn-action" style="flex: 1;" disabled>Counter</button>
-          <button id="btn-allow-play" class="btn-action" style="flex: 1;" disabled>Allow</button>
+      <!-- Match Stats & Phase -->
+      <div class="sidebar-section info-box">
+        <div class="info-row">
+          <span class="info-label">Game Phase:</span>
+          <span id="phase-indicator" class="info-value">PLAY OR PASS</span>
         </div>
-        <button id="btn-reset-selection" class="btn-action" disabled>Reset Selection</button>
+        <div class="info-row">
+          <span class="info-label">Turn Number:</span>
+          <span id="turn-indicator" class="info-value">1</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Opponent:</span>
+          <span id="opponent-name-indicator" class="info-value">Searching...</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Seat:</span>
+          <span id="seat-indicator" class="info-value">0</span>
+        </div>
       </div>
 
       <!-- Scrolling Event Log -->
