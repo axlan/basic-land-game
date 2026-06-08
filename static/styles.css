@@ -582,6 +582,89 @@ input[type="text"]:focus {
 }
 
 /* ==========================================
+   CARD HOVER TOOLTIP
+   ========================================== */
+
+#card-tooltip {
+  position: fixed;
+  z-index: 9000;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  width: 200px;
+}
+
+#card-tooltip.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.tooltip-inner {
+  background: rgba(10, 14, 28, 0.96);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--tooltip-accent, rgba(129, 140, 248, 0.4));
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.6),
+    0 0 16px var(--tooltip-glow, rgba(129, 140, 248, 0.12));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tooltip-emoji {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+.tooltip-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--tooltip-color, var(--accent-purple));
+}
+
+.tooltip-body {
+  font-size: 0.78rem;
+  color: rgba(248, 250, 252, 0.7);
+  line-height: 1.55;
+}
+
+.tooltip-body strong {
+  color: rgba(248, 250, 252, 0.95);
+  font-weight: 600;
+}
+
+/* Notch / arrow pointing down toward the card */
+.tooltip-inner::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid rgba(10, 14, 28, 0.96);
+}
+
+/* Per-land accent colours */
+#card-tooltip[data-land="forest"]   { --tooltip-color: #34d399; --tooltip-accent: rgba(52, 211, 153, 0.4); --tooltip-glow: rgba(52, 211, 153, 0.12); }
+#card-tooltip[data-land="island"]   { --tooltip-color: #60a5fa; --tooltip-accent: rgba(96, 165, 250, 0.4);  --tooltip-glow: rgba(96, 165, 250, 0.12); }
+#card-tooltip[data-land="mountain"] { --tooltip-color: #f87171; --tooltip-accent: rgba(248, 113, 113, 0.4); --tooltip-glow: rgba(248, 113, 113, 0.12); }
+#card-tooltip[data-land="plains"]   { --tooltip-color: #fbbf24; --tooltip-accent: rgba(251, 191, 36, 0.4);  --tooltip-glow: rgba(251, 191, 36, 0.12); }
+#card-tooltip[data-land="swamp"]    { --tooltip-color: #c084fc; --tooltip-accent: rgba(192, 132, 252, 0.4); --tooltip-glow: rgba(192, 132, 252, 0.12); }
+
+/* ==========================================
    GAME OVER OVERLAY
    ========================================== */
 
@@ -609,4 +692,232 @@ input[type="text"]:focus {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
+}
+
+/* ==========================================
+   RULES ACCORDION
+   ========================================== */
+
+.rules-accordion {
+  margin-top: 1.5rem;
+  border: 1px solid rgba(129, 140, 248, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.4);
+  transition: box-shadow 0.3s ease;
+}
+
+.rules-accordion:has(#rules-body:not([hidden])) {
+  box-shadow: 0 0 20px rgba(129, 140, 248, 0.1);
+}
+
+/* Toggle Button */
+.rules-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.1rem;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.rules-toggle:hover {
+  background: rgba(129, 140, 248, 0.08);
+  color: var(--accent-purple);
+}
+
+.rules-toggle[aria-expanded="true"] {
+  color: var(--accent-purple);
+  border-bottom: 1px solid rgba(129, 140, 248, 0.2);
+  background: rgba(129, 140, 248, 0.06);
+}
+
+/* Animated Chevron */
+.rules-chevron {
+  display: inline-block;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--accent-purple);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center;
+}
+
+.rules-toggle[aria-expanded="true"] .rules-chevron {
+  transform: rotate(180deg);
+}
+
+/* Accordion Body */
+.rules-body {
+  /* Hidden via [hidden] attr but we animate via max-height trick when shown */
+  overflow: hidden;
+}
+
+.rules-body:not([hidden]) {
+  animation: accordionOpen 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes accordionOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rules-content {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Intro paragraph */
+.rules-intro {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  border-left: 2px solid var(--accent-purple);
+  padding-left: 0.85rem;
+}
+
+.rules-intro strong {
+  color: var(--text-primary);
+}
+
+.rules-intro em {
+  color: var(--accent-yellow);
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* Land Cards Grid */
+.rules-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.rules-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rules-card:hover {
+  transform: translateY(-2px);
+}
+
+.rules-card .rules-emoji {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.rules-card strong {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.rules-card p {
+  color: rgba(248, 250, 252, 0.65);
+  font-size: 0.78rem;
+}
+
+/* Land-type color themes */
+.rules-forest {
+  background: rgba(52, 211, 153, 0.06);
+  border-color: rgba(52, 211, 153, 0.25);
+  color: var(--accent-green);
+}
+.rules-forest:hover {
+  box-shadow: 0 4px 14px rgba(52, 211, 153, 0.15);
+}
+
+.rules-island {
+  background: rgba(96, 165, 250, 0.06);
+  border-color: rgba(96, 165, 250, 0.25);
+  color: var(--accent-blue);
+}
+.rules-island:hover {
+  box-shadow: 0 4px 14px rgba(96, 165, 250, 0.15);
+}
+
+.rules-mountain {
+  background: rgba(248, 113, 113, 0.06);
+  border-color: rgba(248, 113, 113, 0.25);
+  color: var(--accent-red);
+}
+.rules-mountain:hover {
+  box-shadow: 0 4px 14px rgba(248, 113, 113, 0.15);
+}
+
+.rules-plains {
+  background: rgba(251, 191, 36, 0.06);
+  border-color: rgba(251, 191, 36, 0.25);
+  color: var(--accent-yellow);
+}
+.rules-plains:hover {
+  box-shadow: 0 4px 14px rgba(251, 191, 36, 0.15);
+}
+
+.rules-swamp {
+  background: rgba(168, 85, 247, 0.06);
+  border-color: rgba(168, 85, 247, 0.25);
+  color: #c084fc;
+}
+.rules-swamp:hover {
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.15);
+}
+
+/* Counter Note */
+.rules-counter-note {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  padding: 0.65rem 0.85rem;
+  background: rgba(248, 113, 113, 0.05);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 8px;
+}
+
+.rules-counter-note strong {
+  color: var(--accent-red);
+}
+
+/* Blog Link */
+.rules-blog-link {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-purple);
+  text-decoration: none;
+  letter-spacing: 0.3px;
+  transition: color 0.2s, gap 0.2s;
+  align-self: flex-start;
+  opacity: 0.85;
+}
+
+.rules-blog-link:hover {
+  color: #a5b4fc;
+  opacity: 1;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }

@@ -17,5 +17,6 @@ PLAY_OR_PASS
 `uvicorn server:app --reload --port 8000`
 
 TODO:
+Make responsive
 Password for match making
 Have tests use public API.

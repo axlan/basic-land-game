@@ -24,6 +24,62 @@
         <input type="text" id="username-input" placeholder="Enter name (max 32 chars)..." maxlength="32">
       </div>
       <button id="btn-join-lobby" class="btn-primary">Enter Waiting Lobby</button>
+
+      <!-- Rules Accordion -->
+      <div class="rules-accordion" id="rules-accordion">
+        <button class="rules-toggle" id="rules-toggle" aria-expanded="false">
+          <span>How to Play</span>
+          <span class="rules-chevron">▾</span>
+        </button>
+        <div class="rules-body" id="rules-body" hidden>
+          <div class="rules-content">
+            <p class="rules-intro">
+              Each player starts with a 50-card library (10 each of the 5 basic land types) and draws 5 cards.
+              On your turn you may play one land from your hand. First player to assemble
+              <strong>one of each type</strong> (Domain) <em>or</em> <strong>five of the same type</strong> (Mono) wins.
+            </p>
+
+            <div class="rules-grid">
+              <div class="rules-card rules-forest">
+                <span class="rules-emoji">🌳</span>
+                <strong>Forest</strong>
+                <p>Return any land from <em>your</em> graveyard to your hand.</p>
+              </div>
+              <div class="rules-card rules-island">
+                <span class="rules-emoji">💧</span>
+                <strong>Island</strong>
+                <p>Draw a card. <em>Or</em> discard Island + another land to counter an opponent's land play.</p>
+              </div>
+              <div class="rules-card rules-mountain">
+                <span class="rules-emoji">🔥</span>
+                <strong>Mountain</strong>
+                <p>Destroy one of your opponent's active lands (target declared before they can counter).</p>
+              </div>
+              <div class="rules-card rules-plains">
+                <span class="rules-emoji">☀️</span>
+                <strong>Plains</strong>
+                <p>Copy the effect of one of your other non-Plains active lands.</p>
+              </div>
+              <div class="rules-card rules-swamp">
+                <span class="rules-emoji">💀</span>
+                <strong>Swamp</strong>
+                <p>Look at the opponent's hand and choose a card for them to discard.</p>
+              </div>
+            </div>
+
+            <p class="rules-counter-note">
+              <strong>Counter window:</strong> After any land is announced, the non-active player may discard
+              an Island + one other land card to counter it — sending the played land to the graveyard with no effect.
+            </p>
+
+            <a class="rules-blog-link"
+               href="https://ultimateguard.com/en/blog/basic-land-game-rules-gameplay-strategy-magic-the-gathering-skura"
+               target="_blank" rel="noopener noreferrer">
+              Full rules &amp; strategy guide ↗
+            </a>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Phase 2: Wait & Challenge -->

@@ -16,6 +16,62 @@ let gameState = null;
 let selectedCardsInHand = []; // Card IDs selected in hand (up to 2 for counters)
 let selectedTargetCard = null; // Card ID selected for target effects
 
+// ==========================================
+// Card Tooltip Data
+// ==========================================
+const CARD_TOOLTIP_DATA = {
+  forest:   { emoji: '🌳', name: 'Forest',   body: 'Return any land from <strong>your graveyard</strong> to your hand.' },
+  island:   { emoji: '💧', name: 'Island',   body: 'Draw a card. <strong>Or</strong> discard Island + another land to <strong>counter</strong> an opponent\'s land play.' },
+  mountain: { emoji: '🔥', name: 'Mountain', body: '<strong>Destroy</strong> one of your opponent\'s active lands. Target is declared before they can counter.' },
+  plains:   { emoji: '☀️', name: 'Plains',   body: '<strong>Copy</strong> the effect of one of your other non-Plains active lands.' },
+  swamp:    { emoji: '💀', name: 'Swamp',    body: 'Look at the opponent\'s hand and choose a card for them to <strong>discard</strong>.' },
+};
+
+// Inject and manage the floating tooltip element
+const _tooltip = (() => {
+  const el = document.createElement('div');
+  el.id = 'card-tooltip';
+  el.innerHTML = `<div class="tooltip-inner">
+    <div class="tooltip-header">
+      <span class="tooltip-emoji"></span>
+      <span class="tooltip-name"></span>
+    </div>
+    <div class="tooltip-body"></div>
+  </div>`;
+  document.body.appendChild(el);
+
+  return {
+    show(landType, canvasX, canvasY) {
+      const data = CARD_TOOLTIP_DATA[landType];
+      if (!data) return;
+
+      el.querySelector('.tooltip-emoji').textContent = data.emoji;
+      el.querySelector('.tooltip-name').textContent = data.name;
+      el.querySelector('.tooltip-body').innerHTML = data.body;
+      el.setAttribute('data-land', landType);
+
+      // Position above the card; canvasX/Y are canvas-relative pixels
+      const canvas = document.querySelector('#game-canvas-container canvas');
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+
+      const tipW = 200;
+      let left = rect.left + canvasX - tipW / 2;
+      let top  = rect.top  + canvasY - 85; // sit above the card
+
+      // Keep inside viewport horizontally
+      left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+
+      el.style.left = left + 'px';
+      el.style.top  = top  + 'px';
+      el.classList.add('visible');
+    },
+    hide() {
+      el.classList.remove('visible');
+    }
+  };
+})();
+
 let lobbyWs = null;
 let gameWs = null;
 let lobbyPingInterval = null;
@@ -146,6 +202,10 @@ class CardUI extends Phaser.GameObjects.Container {
         scale: 1.05,
         duration: 150
       });
+      // Show tooltip only for face-up hand cards
+      if (isFaceUp && landType) {
+        _tooltip.show(landType, x, y - 65);
+      }
     });
 
     this.on('pointerout', () => {
@@ -156,6 +216,7 @@ class CardUI extends Phaser.GameObjects.Container {
         scale: 1.0,
         duration: 150
       });
+      _tooltip.hide();
     });
 
     scene.add.existing(this);
@@ -1324,6 +1385,19 @@ document.addEventListener('DOMContentLoaded', () => {
         onStrategyChange(radio.value);
       }
     });
+  });
+
+  // Rules accordion toggle
+  const rulesToggle = document.getElementById('rules-toggle');
+  const rulesBody = document.getElementById('rules-body');
+  rulesToggle.addEventListener('click', () => {
+    const isExpanded = rulesToggle.getAttribute('aria-expanded') === 'true';
+    rulesToggle.setAttribute('aria-expanded', String(!isExpanded));
+    if (isExpanded) {
+      rulesBody.hidden = true;
+    } else {
+      rulesBody.hidden = false;
+    }
   });
 
   // Reconnection Check on page load
