@@ -330,12 +330,146 @@ def test_island_counter():
         counter_second_card_id=counter_other.card_id,
     ))
     assert r2.success, r2.message
+    assert game.phase == GamePhase.AWAIT_COUNTER_COUNTER
+
+    r3 = game.apply_action(GameAction(
+        ActionType.ALLOW_LAND, active
+    ))
+    assert r3.success, r3.message
+    assert game.phase == GamePhase.PLAY_OR_PASS
 
     # Mountain should be in active player's graveyard
     assert mountain in player.graveyard
     # Counter cards in opponent's graveyard
     assert counter_island in opponent.graveyard
     assert counter_other  in opponent.graveyard
+    print("PASS test_island_counter")
+
+def test_2_island_counter():
+    game = make_game()
+    active = game.active_player_idx
+    opponent_idx = 1 - active
+    player   = game.players[active]
+    opponent = game.players[opponent_idx]
+
+    # Give opponent Island + another land to counter with
+    counter_island = Card(LandType.ISLAND)
+    counter_other  = Card(LandType.SWAMP)
+    opponent.hand.append(counter_island)
+    opponent.hand.append(counter_other)
+
+    # Active player tries to play a Mountain
+    mountain = Card(LandType.MOUNTAIN)
+    counter_island2 = Card(LandType.ISLAND)
+    counter_other2  = Card(LandType.SWAMP)
+    player.hand.append(mountain)
+    player.hand.append(counter_island2)
+    player.hand.append(counter_other2)
+
+    r1 = game.apply_action(GameAction(ActionType.PLAY_LAND, active, card_id=mountain.card_id))
+    assert r1.success
+    assert game.phase == GamePhase.AWAIT_COUNTER
+
+    r2 = game.apply_action(GameAction(
+        ActionType.COUNTER_LAND, opponent_idx,
+        card_id=counter_island.card_id,
+        counter_second_card_id=counter_other.card_id,
+    ))
+    assert r2.success, r2.message
+    assert game.phase == GamePhase.AWAIT_COUNTER_COUNTER
+
+    r3 = game.apply_action(GameAction(
+        ActionType.COUNTER_LAND, active,
+        card_id=counter_island2.card_id,
+        counter_second_card_id=counter_other2.card_id,
+    ))
+    assert r3.success, r3.message
+    assert game.phase == GamePhase.AWAIT_COUNTER
+
+    r4 = game.apply_action(GameAction(
+        ActionType.ALLOW_LAND, opponent_idx
+    ))
+    assert r4.success, r4.message
+    assert game.phase == GamePhase.PLAY_OR_PASS
+
+    # Mountain should be played
+    assert mountain in player.active
+    # Counter cards in graveyards
+    assert counter_island in opponent.graveyard
+    assert counter_other  in opponent.graveyard
+    assert counter_island2 in player.graveyard
+    assert counter_other2  in player.graveyard
+    print("PASS test_island_counter")
+
+
+def test_3_island_counter():
+    game = make_game()
+    active = game.active_player_idx
+    opponent_idx = 1 - active
+    player   = game.players[active]
+    opponent = game.players[opponent_idx]
+
+    # Give opponent Island + another land to counter with
+    counter_island = Card(LandType.ISLAND)
+    counter_other  = Card(LandType.SWAMP)
+    counter_island3 = Card(LandType.ISLAND)
+    counter_other3  = Card(LandType.PLAINS)
+    opponent.hand.append(counter_island)
+    opponent.hand.append(counter_other)
+    opponent.hand.append(counter_island3)
+    opponent.hand.append(counter_other3)
+
+    # Active player tries to play a Mountain
+    mountain = Card(LandType.MOUNTAIN)
+    counter_island2 = Card(LandType.ISLAND)
+    counter_other2  = Card(LandType.SWAMP)
+    player.hand.append(mountain)
+    player.hand.append(counter_island2)
+    player.hand.append(counter_other2)
+
+    r1 = game.apply_action(GameAction(ActionType.PLAY_LAND, active, card_id=mountain.card_id))
+    assert r1.success
+    assert game.phase == GamePhase.AWAIT_COUNTER
+
+    r2 = game.apply_action(GameAction(
+        ActionType.COUNTER_LAND, opponent_idx,
+        card_id=counter_island.card_id,
+        counter_second_card_id=counter_other.card_id,
+    ))
+    assert r2.success, r2.message
+    assert game.phase == GamePhase.AWAIT_COUNTER_COUNTER
+
+    r3 = game.apply_action(GameAction(
+        ActionType.COUNTER_LAND, active,
+        card_id=counter_island2.card_id,
+        counter_second_card_id=counter_other2.card_id,
+    ))
+    assert r3.success, r3.message
+    assert game.phase == GamePhase.AWAIT_COUNTER
+
+    r4 = game.apply_action(GameAction(
+        ActionType.COUNTER_LAND, opponent_idx,
+        card_id=counter_island3.card_id,
+        counter_second_card_id=counter_other3.card_id,
+    ))
+    assert r4.success, r4.message
+    assert game.phase == GamePhase.AWAIT_COUNTER_COUNTER
+
+    r5 = game.apply_action(GameAction(
+        ActionType.ALLOW_LAND, active
+    ))
+    assert r5.success, r5.message
+    assert game.phase == GamePhase.PLAY_OR_PASS
+
+    # Mountain should be discarded
+    assert mountain in player.graveyard
+    # Counter cards in graveyards
+    assert counter_island in opponent.graveyard
+    assert counter_other  in opponent.graveyard
+    assert counter_island3 in opponent.graveyard
+    assert counter_other3  in opponent.graveyard
+    assert counter_island2 in player.graveyard
+    assert counter_other2  in player.graveyard
     print("PASS test_island_counter")
 
 
@@ -643,6 +777,8 @@ if __name__ == "__main__":
         test_plains_copies_island,
         test_plains_copies_mountain,
         test_island_counter,
+        test_2_island_counter,
+        test_3_island_counter,
         test_counter_requires_island,
         test_pass_turn,
         test_win_domain,

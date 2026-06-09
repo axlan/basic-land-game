@@ -597,7 +597,11 @@ class BasicLandGameScene extends Phaser.Scene {
         let label;
         if (gameState.phase === 'AWAIT_COUNTER') {
           label = 'Counter Land?';
-        } else {
+        }
+        else if (gameState.phase === 'AWAIT_COUNTER_COUNTER') {
+          label = 'Counter Counter?';
+        }
+        else {
           const resolveLabels = {
             plains:   'Select Played Land',
             swamp:    "Select from Opponent's Hand",
@@ -1034,7 +1038,7 @@ function handleCardUIInteraction(cardUI) {
   }
 
   // 2. AWAIT COUNTER PHASE
-  else if (gameState.phase === 'AWAIT_COUNTER') {
+  else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
     // Non-active player is selecting counter spell cost (Island + 1 other card in hand)
     const inHand = gameState.my_hand.some(c => c.card_id === cardUI.cardId);
     if (inHand) {
@@ -1088,7 +1092,7 @@ function getTargetableCardIds() {
   }
 
   // Under AWAIT_COUNTER, highlight hand cards (for selecting Island + other)
-  else if (gameState.phase === 'AWAIT_COUNTER') {
+  else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
     gameState.my_hand.forEach(c => ids.add(c.card_id));
   }
 
@@ -1131,7 +1135,7 @@ function getTargetableCardIds() {
 // Strategy automated runs for counters
 function handleCounterAutoRun() {
   if (!gameState) return;
-  if (gameState.phase !== 'AWAIT_COUNTER') return;
+  if (!gameState.phase.startsWith('AWAIT_COUNTER')) return;
   if (gameState.whose_turn !== 'you') return;
 
   const strategy = getSelectedCounterStrategy();
@@ -1178,7 +1182,7 @@ function updateControls() {
   }
 
   // AWAIT COUNTER PHASE
-  else if (gameState.phase === 'AWAIT_COUNTER') {
+  else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
     btnAllow.disabled = false;
     btnReset.disabled = (selectedCardsInHand.length === 0);
 

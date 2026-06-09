@@ -52,11 +52,12 @@ class LandType(str, Enum):
 
 class GamePhase(Enum):
     """Coarse phases within a single turn."""
-    DRAW           = auto()   # Active player may draw (skipped on very first turn)
-    PLAY_OR_PASS   = auto()   # Active player decides: play a land or pass
-    AWAIT_COUNTER  = auto()   # Opponent decides whether to counter the land play
-    RESOLVE_EFFECT = auto()   # Effect resolves (needs additional targeting info)
-    GAME_OVER      = auto()
+    DRAW                   = auto()   # Active player may draw (skipped on very first turn)
+    PLAY_OR_PASS           = auto()   # Active player decides: play a land or pass
+    AWAIT_COUNTER          = auto()   # Opponent decides whether to counter the land play
+    AWAIT_COUNTER_COUNTER  = auto()   # Active player whether to counter the counter
+    RESOLVE_EFFECT         = auto()   # Effect resolves (needs additional targeting info)
+    GAME_OVER              = auto()
 
 
 class ActionType(Enum):
@@ -114,10 +115,6 @@ class PlayerState:
         card = self.library.pop()
         self.hand.append(card)
         return card
-
-    def move_hand_to_active(self, card: Card) -> None:
-        self.hand.remove(card)
-        self.active.append(card)
 
     def move_hand_to_graveyard(self, card: Card) -> None:
         self.hand.remove(card)
@@ -200,8 +197,7 @@ class BasicLandGame:
         2. PLAY_OR_PASS  — active player either plays a land or passes.
            If a land is played:
         3. AWAIT_COUNTER — opponent decides to counter or allow.
-           If allowed (or uncounterable — currently all plays are
-           counterable per the rules):
+        4. AWAIT_COUNTER_COUNTER — if countered, active decides to counter back.
         4. RESOLVE_EFFECT — if the land has a targeting effect (Mountain,
                             Forest, Plains, Swamp) the active player
                             provides the target via a follow-up action.
@@ -244,6 +240,15 @@ class BasicLandGame:
 
     def get_inactive_player_idx(self)-> int:
         return 1 - self.active_player_idx
+    
+    def get_player_idx_deciding_on_counter(self) -> int:
+        # If an even number of counter spells have been played, the opponent is deciding whether to counter the played land.
+        # For odd numbers, the active player is deciding whether to counter the counter.
+        if self.phase == GamePhase.AWAIT_COUNTER:
+            return self.get_inactive_player_idx()
+        # AWAIT_COUNTER_COUNTER
+        else:
+            return self.active_player_idx
 
     # ------------------------------------------------------------------
     # Public API
@@ -339,6 +344,7 @@ class BasicLandGame:
 
         # Announce the play; store pending state
         self._pending_card = card
+        player.hand.remove(card)
         self.phase = GamePhase.AWAIT_COUNTER
 
         self._log(
@@ -364,14 +370,14 @@ class BasicLandGame:
         return ActionResult.ok("Turn passed.", events=list(self.event_log[-3:]))
 
     def _handle_counter_land(self, action: GameAction) -> ActionResult:
-        if self.phase != GamePhase.AWAIT_COUNTER:
+        if self.phase not in (GamePhase.AWAIT_COUNTER, GamePhase.AWAIT_COUNTER_COUNTER):
             return ActionResult.fail(
                 f"No land play is pending to counter (phase={self.phase.name})."
             )
-        opponent_idx = self.get_inactive_player_idx()
-        if action.player_id != opponent_idx:
+        expected_player_idx = self.get_player_idx_deciding_on_counter()
+        if action.player_id != expected_player_idx:
             return ActionResult.fail(
-                "Only the non-active player can counter a land play."
+                f"Waiting on player {expected_player_idx} to allow/counter a land play."
             )
         if action.card_id is None or action.counter_second_card_id is None:
             return ActionResult.fail(
@@ -380,9 +386,9 @@ class BasicLandGame:
 
         assert self._pending_card is not None
 
-        opponent = self.players[opponent_idx]
+        counter_player = self.players[expected_player_idx]
 
-        island_card = opponent.hand_card(action.card_id)
+        island_card = counter_player.hand_card(action.card_id)
         if island_card is None:
             return ActionResult.fail(
                 f"Card {action.card_id} is not in your hand."
@@ -392,7 +398,7 @@ class BasicLandGame:
                 "The first counter card must be an Island."
             )
 
-        second_card = opponent.hand_card(action.counter_second_card_id)
+        second_card = counter_player.hand_card(action.counter_second_card_id)
         if second_card is None:
             return ActionResult.fail(
                 f"Card {action.counter_second_card_id} is not in your hand."
@@ -403,42 +409,58 @@ class BasicLandGame:
             )
 
         # Pay the counter cost: discard Island + second card
-        opponent.move_hand_to_graveyard(island_card)
-        opponent.move_hand_to_graveyard(second_card)
+        counter_player.move_hand_to_graveyard(island_card)
+        counter_player.move_hand_to_graveyard(second_card)
 
-        # The played land goes to the active player's graveyard
-        attacker = self.players[self.active_player_idx]
-        attacker.move_hand_to_graveyard(self._pending_card)
+        self.phase = GamePhase.AWAIT_COUNTER_COUNTER if self.phase == GamePhase.AWAIT_COUNTER else GamePhase.AWAIT_COUNTER
 
         self._log(
-            f"Player {opponent_idx} countered with Island + "
+            f"Player {expected_player_idx} countered with Island + "
             f"{second_card.land_type.value}. "
-            f"Player {self.active_player_idx}'s {self._pending_card.land_type.value} "
-            f"was discarded."
         )
 
-        self._pending_card = None
-        self._advance_turn()
         return ActionResult.ok(
-            "Land play countered successfully.",
+            "Counter used successfully.",
             events=list(self.event_log[-5:]),
         )
 
     def _handle_allow_land(self, action: GameAction) -> ActionResult:
-        if self.phase != GamePhase.AWAIT_COUNTER:
+        if self.phase not in (GamePhase.AWAIT_COUNTER, GamePhase.AWAIT_COUNTER_COUNTER):
             return ActionResult.fail(
                 f"No land play is pending (phase={self.phase.name})."
             )
-        opponent_idx = self.get_inactive_player_idx()
-        if action.player_id != opponent_idx:
+        expected_player_idx = self.get_player_idx_deciding_on_counter()
+        if action.player_id != expected_player_idx:
             return ActionResult.fail(
-                "Only the non-active player can allow/counter a land play."
+                f"Waiting on player {expected_player_idx} to allow/counter a land play."
+            )
+        
+        # AWAIT_COUNTER phase implies there's a pending card/
+        assert self._pending_card is not None
+
+        # No counter, or counter was countered
+        if self.phase == GamePhase.AWAIT_COUNTER:
+            self._log(
+                f"Player {action.player_id} allows the land play."
+            )
+            return self._resolve_land()
+        # Land drop was countered
+        else:
+            # The played land goes to the active player's graveyard
+            attacker = self.players[self.active_player_idx]
+            attacker.graveyard.append(self._pending_card)
+
+            self._log(
+                f"Player {self.active_player_idx}'s {self._pending_card.land_type.value} "
+                f"was discarded."
             )
 
-        self._log(
-            f"Player {action.player_id} allows the land play."
-        )
-        return self._resolve_land()
+            self._pending_card = None
+            self._advance_turn()
+            return ActionResult.ok(
+                "Land play countered successfully.",
+                events=list(self.event_log[-5:]),
+            )
 
     def _handle_forfeit(self, action: GameAction) -> ActionResult:
         player_idx = action.player_id
@@ -469,7 +491,7 @@ class BasicLandGame:
         player_idx = self.active_player_idx
         player = self.players[player_idx]
 
-        player.move_hand_to_active(card)
+        player.active.append(self._pending_card)
         self._log(f"Player {player_idx} plays {card.land_type.value}.")
 
         # Check win condition immediately after playing
