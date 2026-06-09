@@ -485,7 +485,7 @@ async def submit_action(
 
     **action_type** (case-insensitive) — one of:
     `PLAY_LAND`, `PASS_TURN`, `COUNTER_LAND`, `ALLOW_LAND`,
-    `MOUNTAIN_TARGET`, `FOREST_TARGET`, `SWAMP_DISCARD`, `PLAINS_TARGET`
+    `SPECIFY_TARGET`, `FORFEIT`
 
     After a successful action the server pushes a **game_state** message to
     both players' game WebSocket connections.

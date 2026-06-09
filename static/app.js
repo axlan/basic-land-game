@@ -1060,15 +1060,10 @@ function handleCardUIInteraction(cardUI) {
       if (!pending) return;
 
       const landType = pending.land_type;
-      let actionType = '';
+      let needs_target = landType === 'plains' || landType === 'mountain' || landType === 'forest' || landType === 'swamp';
 
-      if (landType === 'plains') actionType = 'PLAINS_TARGET';
-      else if (landType === 'mountain') actionType = 'MOUNTAIN_TARGET';
-      else if (landType === 'forest') actionType = 'FOREST_TARGET';
-      else if (landType === 'swamp') actionType = 'SWAMP_DISCARD';
-
-      if (actionType) {
-        sendGameAction(actionType, { target_card_id: cardUI.cardId });
+      if (needs_target) {
+        sendGameAction('SPECIFY_TARGET', { target_card_id: cardUI.cardId });
         selectedCardsInHand = [];
         selectedTargetCard = null;
       }

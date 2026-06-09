@@ -68,11 +68,8 @@ class ActionType(Enum):
     COUNTER_LAND       = auto()   # Spend Island + another land to counter
     ALLOW_LAND         = auto()   # Let the land resolve
 
-    # Effect-resolution actions — only valid during RESOLVE_EFFECT phase
-    MOUNTAIN_TARGET    = auto()   # Choose which opponent active land to destroy
-    FOREST_TARGET      = auto()   # Choose which graveyard land to return to hand
-    SWAMP_DISCARD      = auto()   # Choose which opponent hand card to discard
-    PLAINS_TARGET      = auto()   # Choose which of your active lands to copy
+    SPECIFY_TARGET     = auto()   # Choose which card to target for a land's effect
+
     FORFEIT            = auto()   # Surrender the game
 
 
@@ -160,10 +157,7 @@ class GameAction:
       PASS_TURN       : player_id
       COUNTER_LAND    : player_id, card_id (Island), counter_second_card_id
       ALLOW_LAND      : player_id
-      MOUNTAIN_TARGET : player_id, target_card_id (opponent active land)
-      FOREST_TARGET   : player_id, target_card_id (any graveyard land)
-      SWAMP_DISCARD   : player_id, target_card_id (opponent hand card)
-      PLAINS_TARGET   : player_id, target_card_id (own active non-Plains land)
+      SPECIFY_TARGET  : player_id, target_card_id (must be valid for the pending card effect)
     """
     action_type:           ActionType
     player_id:             int
@@ -268,10 +262,7 @@ class BasicLandGame:
             ActionType.PASS_TURN:       self._handle_pass_turn,
             ActionType.COUNTER_LAND:    self._handle_counter_land,
             ActionType.ALLOW_LAND:      self._handle_allow_land,
-            ActionType.MOUNTAIN_TARGET: self._handle_mountain_target,
-            ActionType.FOREST_TARGET:   self._handle_forest_target,
-            ActionType.SWAMP_DISCARD:   self._handle_swamp_discard,
-            ActionType.PLAINS_TARGET:   self._handle_plains_target,
+            ActionType.SPECIFY_TARGET:  self._resolve_targeted_effect,
             ActionType.FORFEIT:          self._handle_forfeit,
         }.get(action.action_type)
 
@@ -449,37 +440,6 @@ class BasicLandGame:
         )
         return self._resolve_land()
 
-    # Effect resolution handlers
-
-    def _handle_mountain_target(self, action: GameAction) -> ActionResult:
-        return self._resolve_targeted_effect(
-            action, LandType.MOUNTAIN, self._apply_mountain
-        )
-
-    def _handle_forest_target(self, action: GameAction) -> ActionResult:
-        return self._resolve_targeted_effect(
-            action, LandType.FOREST, self._apply_forest
-        )
-
-    def _handle_swamp_discard(self, action: GameAction) -> ActionResult:
-        return self._resolve_targeted_effect(
-            action, LandType.SWAMP, self._apply_swamp
-        )
-
-    def _handle_plains_target(self, action: GameAction) -> ActionResult:
-        if self.phase != GamePhase.RESOLVE_EFFECT:
-            return ActionResult.fail(
-                f"Not in effect-resolution phase (phase={self.phase.name})."
-            )
-        if self._pending_card is None or self._pending_card.land_type != LandType.PLAINS:
-            return ActionResult.fail("Pending land is not a Plains.")
-        if action.player_id != self.active_player_idx:
-            return ActionResult.fail("It is not your turn to resolve an effect.")
-        if action.target_card_id is None:
-            return ActionResult.fail("target_card_id is required.")
-
-        return self._apply_plains(action)
-
     def _handle_forfeit(self, action: GameAction) -> ActionResult:
         player_idx = action.player_id
         opponent_idx = 1 - player_idx
@@ -606,10 +566,10 @@ class BasicLandGame:
         # Transition to effect-resolution phase for targeting
         self.phase = GamePhase.RESOLVE_EFFECT
         prompts = {
-            LandType.MOUNTAIN: "Provide MOUNTAIN_TARGET: target_card_id = opponent active land to destroy.",
-            LandType.FOREST:   "Provide FOREST_TARGET: target_card_id = any graveyard land to return to hand.",
-            LandType.SWAMP:    "Provide SWAMP_DISCARD: target_card_id = opponent hand card to discard.",
-            LandType.PLAINS:   "Provide PLAINS_TARGET: target_card_id = one of your own active non-Plains lands to copy.",
+            LandType.MOUNTAIN: "Provide SPECIFY_TARGET: target_card_id = opponent active land to destroy.",
+            LandType.FOREST:   "Provide SPECIFY_TARGET: target_card_id = any graveyard land to return to hand.",
+            LandType.SWAMP:    "Provide SPECIFY_TARGET: target_card_id = opponent hand card to discard.",
+            LandType.PLAINS:   "Provide SPECIFY_TARGET: target_card_id = one of your own active non-Plains lands to copy.",
         }
         return ActionResult.ok(
             prompts[card.land_type],
@@ -618,25 +578,31 @@ class BasicLandGame:
 
     def _resolve_targeted_effect(
         self,
-        action: GameAction,
-        expected_land: LandType,
-        apply_fn,
+        action: GameAction
     ) -> ActionResult:
         if self.phase != GamePhase.RESOLVE_EFFECT:
             return ActionResult.fail(
                 f"Not in effect-resolution phase (phase={self.phase.name})."
             )
-        if self._pending_card is None or self._pending_card.land_type != expected_land:
-            return ActionResult.fail(
-                f"Pending land is not a {expected_land.value}."
-            )
+        
+        # The RESOLVE_EFFECT phase implies a pending card.
+        assert self._pending_card is not None
+        
+        apply_fn = {
+           LandType.MOUNTAIN : self._apply_mountain,
+           LandType.SWAMP : self._apply_swamp,
+           LandType.FOREST : self._apply_forest,
+           LandType.PLAINS : self._apply_plains,
+        }[self._pending_card.land_type]
+
         if action.player_id != self.active_player_idx:
             return ActionResult.fail("It is not your turn to resolve an effect.")
         if action.target_card_id is None:
             return ActionResult.fail("target_card_id is required.")
 
         result = apply_fn(action)
-        if result.success:
+        # Plains handle phase transition internally
+        if apply_fn != self._apply_plains and result.success:
             self._pending_card = None
             self._advance_turn()
         return result
@@ -784,9 +750,9 @@ class BasicLandGame:
         self.phase = GamePhase.RESOLVE_EFFECT
 
         prompts = {
-            LandType.MOUNTAIN: "Provide MOUNTAIN_TARGET for Plains copy.",
-            LandType.FOREST:   "Provide FOREST_TARGET for Plains copy.",
-            LandType.SWAMP:    "Provide SWAMP_DISCARD for Plains copy.",
+            LandType.MOUNTAIN: "Provide opponent active land for Plains copy.",
+            LandType.FOREST:   "Provide graveyard land for Plains copy.",
+            LandType.SWAMP:    "Provide opponent hand card for Plains copy.",
         }
         return ActionResult.ok(
             prompts.get(target.land_type, "Provide effect target for Plains copy."),

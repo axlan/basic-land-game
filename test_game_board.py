@@ -144,7 +144,7 @@ def test_mountain_destroy():
     assert game.phase == GamePhase.RESOLVE_EFFECT
 
     # Now target the Plains
-    r3 = game.apply_action(GameAction(ActionType.MOUNTAIN_TARGET, active, target_card_id=plains.card_id))
+    r3 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=plains.card_id))
     assert r3.success, r3.message
     assert plains not in opponent.active
     assert plains in opponent.graveyard
@@ -155,7 +155,7 @@ def test_mountain_destroy():
 # Test: Mountain targeting invalid card rejected
 # ---------------------------------------------------------------------------
 
-def test_mountain_invalid_target():
+def test_mountain_SPECIFY_TARGET():
     game = make_game()
     active = game.active_player_idx
     opponent_idx = 1 - active
@@ -168,9 +168,9 @@ def test_mountain_invalid_target():
 
     play_and_allow(game, active, mountain.card_id)
 
-    r = game.apply_action(GameAction(ActionType.MOUNTAIN_TARGET, active, target_card_id="bad-id"))
+    r = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id="bad-id"))
     assert not r.success
-    print("PASS test_mountain_invalid_target")
+    print("PASS test_mountain_SPECIFY_TARGET")
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def test_forest_regrowth():
     assert r1.success and r2.success
     assert game.phase == GamePhase.RESOLVE_EFFECT
 
-    r3 = game.apply_action(GameAction(ActionType.FOREST_TARGET, active, target_card_id=swamp.card_id))
+    r3 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=swamp.card_id))
     assert r3.success, r3.message
     assert swamp not in player.graveyard
     assert swamp in player.hand
@@ -225,7 +225,7 @@ def test_swamp_thoughtseize():
     assert len(opponent.revealed_card_ids) > 0
     revealed_after_swamp = len(opponent.revealed_card_ids)
 
-    r3 = game.apply_action(GameAction(ActionType.SWAMP_DISCARD, active, target_card_id=target_card.card_id))
+    r3 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=target_card.card_id))
     assert r3.success, r3.message
     assert target_card not in opponent.hand
     assert target_card in opponent.graveyard
@@ -259,7 +259,7 @@ def test_plains_copies_island():
     # Plains goes to RESOLVE_EFFECT
     assert game.phase == GamePhase.RESOLVE_EFFECT
 
-    r3 = game.apply_action(GameAction(ActionType.PLAINS_TARGET, active, target_card_id=island_active.card_id))
+    r3 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=island_active.card_id))
     assert r3.success, r3.message
     # Should have drawn a card
     assert len(player.library) == library_before - 1
@@ -288,12 +288,12 @@ def test_plains_copies_mountain():
     r1, r2 = play_and_allow(game, active, plains.card_id)
     assert r1.success and r2.success
 
-    r3 = game.apply_action(GameAction(ActionType.PLAINS_TARGET, active, target_card_id=mountain_active.card_id))
+    r3 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=mountain_active.card_id))
     assert r3.success, r3.message
     # Now in RESOLVE_EFFECT for Mountain
     assert game.phase == GamePhase.RESOLVE_EFFECT
 
-    r4 = game.apply_action(GameAction(ActionType.MOUNTAIN_TARGET, active, target_card_id=enemy_forest.card_id))
+    r4 = game.apply_action(GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=enemy_forest.card_id))
     assert r4.success, r4.message
     assert enemy_forest in opponent.graveyard
     print("PASS test_plains_copies_mountain")
@@ -458,7 +458,7 @@ def test_no_actions_after_game_over():
 # Test: Mountain with no opponent active lands auto-resolves
 # ---------------------------------------------------------------------------
 
-def test_mountain_no_targets():
+def test_mountain_SPECIFY_TARGETs():
     game = make_game()
     active = game.active_player_idx
     player = game.players[active]
@@ -470,9 +470,9 @@ def test_mountain_no_targets():
 
     r1, r2 = play_and_allow(game, active, mountain.card_id)
     assert r1.success and r2.success
-    # Should auto-advance without requiring MOUNTAIN_TARGET
+    # Should auto-advance without requiring SPECIFY_TARGET
     assert game.phase == GamePhase.PLAY_OR_PASS
-    print("PASS test_mountain_no_targets")
+    print("PASS test_mountain_SPECIFY_TARGETs")
 
 
 # ---------------------------------------------------------------------------
@@ -569,14 +569,14 @@ def test_forest_own_graveyard_only():
 
     # Try to target opponent's card — should fail
     r3 = game.apply_action(
-        GameAction(ActionType.FOREST_TARGET, active, target_card_id=opponent_card.card_id)
+        GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=opponent_card.card_id)
     )
     assert not r3.success, "Should not allow returning opponent's card"
     assert opponent_card in opponent.graveyard  # Card should still be there
 
     # Target own card — should succeed
     r4 = game.apply_action(
-        GameAction(ActionType.FOREST_TARGET, active, target_card_id=own_card.card_id)
+        GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=own_card.card_id)
     )
     assert r4.success, r4.message
     assert own_card in player.hand
@@ -614,7 +614,7 @@ def test_forest_returned_card_revealed():
 
     # Apply Forest effect to return the card
     r3 = game.apply_action(
-        GameAction(ActionType.FOREST_TARGET, active, target_card_id=card.card_id)
+        GameAction(ActionType.SPECIFY_TARGET, active, target_card_id=card.card_id)
     )
     assert r3.success, r3.message
     assert card in player.hand
@@ -637,7 +637,7 @@ if __name__ == "__main__":
         test_card_not_in_hand_rejected,
         test_island_draw,
         test_mountain_destroy,
-        test_mountain_invalid_target,
+        test_mountain_SPECIFY_TARGET,
         test_forest_regrowth,
         test_swamp_thoughtseize,
         test_plains_copies_island,
@@ -648,7 +648,7 @@ if __name__ == "__main__":
         test_win_domain,
         test_win_mono,
         test_no_actions_after_game_over,
-        test_mountain_no_targets,
+        test_mountain_SPECIFY_TARGETs,
         test_plains_cannot_copy_plains,
         test_public_state_hides_hand,
         test_player_hand_private,
