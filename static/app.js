@@ -162,21 +162,12 @@ class CardUI extends Phaser.GameObjects.Container {
 
       // Card land type name
       const typeText = scene.add.text(0, 18, landType.toUpperCase(), {
-        fontSize: '11px',
+        fontSize: '14px',
         fontFamily: 'Outfit, sans-serif',
-        fontWeight: '700',
+        fontWeight: '800',
         fill: nameColors[landType] || '#ffffff'
       }).setOrigin(0.5);
       this.add(typeText);
-
-      // Shortened Card ID
-      const shortId = cardId.substring(0, 8);
-      const idText = scene.add.text(0, 42, shortId, {
-        fontSize: '8px',
-        fontFamily: 'monospace',
-        fill: '#64748b'
-      }).setOrigin(0.5);
-      this.add(idText);
     } else {
       // Facedown card details
       const centerSymbol = scene.add.text(0, 0, '✦', {
@@ -398,7 +389,7 @@ class BasicLandGameScene extends Phaser.Scene {
     const oppLibCard = new CardUI(this, 100, 130, null, 'opp_lib', false, false, false);
     this.cardsGroup.add(oppLibCard);
     const oppLibText = this.add.text(100, 205, `Library: ${oppLibSize}`, {
-      fontSize: '11px',
+      fontSize: '14px',
       fontFamily: 'Outfit, sans-serif',
       fill: '#94a3b8'
     }).setOrigin(0.5);
@@ -447,7 +438,7 @@ class BasicLandGameScene extends Phaser.Scene {
 
       const labelY = 130 + (oppGY.length - 1) * spacing + 75;
       const oppGYText = this.add.text(880, labelY, `Graveyard: ${oppGY.length}`, {
-        fontSize: '11px',
+        fontSize: '14px',
         fontFamily: 'Outfit, sans-serif',
         fill: '#94a3b8'
       }).setOrigin(0.5);
@@ -457,7 +448,7 @@ class BasicLandGameScene extends Phaser.Scene {
       emptyGY.lineStyle(1.5, 0x334155, 0.4);
       emptyGY.strokeRoundedRect(880 - 45, 130 - 65, 90, 130, 8);
       const oppEmptyText = this.add.text(880, 130, 'Empty GY', {
-        fontSize: '10px',
+        fontSize: '14px',
         fontFamily: 'Outfit, sans-serif',
         fill: '#475569'
       }).setOrigin(0.5);
@@ -474,7 +465,7 @@ class BasicLandGameScene extends Phaser.Scene {
     const myLibCard = new CardUI(this, 100, 570, null, 'my_lib', false, false, false);
     this.cardsGroup.add(myLibCard);
     const myLibText = this.add.text(100, 645, `Library: ${myLibSize}`, {
-      fontSize: '11px',
+      fontSize: '14px',
       fontFamily: 'Outfit, sans-serif',
       fill: '#94a3b8'
     }).setOrigin(0.5);
@@ -521,7 +512,7 @@ class BasicLandGameScene extends Phaser.Scene {
 
       const labelY = 570 + 75;
       const myGYText = this.add.text(880, labelY, `Graveyard: ${myGY.length}`, {
-        fontSize: '11px',
+        fontSize: '14px',
         fontFamily: 'Outfit, sans-serif',
         fill: '#94a3b8'
       }).setOrigin(0.5);
@@ -531,7 +522,7 @@ class BasicLandGameScene extends Phaser.Scene {
       emptyGY.lineStyle(1.5, 0x334155, 0.4);
       emptyGY.strokeRoundedRect(880 - 45, 570 - 65, 90, 130, 8);
       const myEmptyText = this.add.text(880, 570, 'Empty GY', {
-        fontSize: '10px',
+        fontSize: '14px',
         fontFamily: 'Outfit, sans-serif',
         fill: '#475569'
       }).setOrigin(0.5);
@@ -560,16 +551,30 @@ class BasicLandGameScene extends Phaser.Scene {
         repeat: -1
       });
 
-      const label = (gameState.phase === 'AWAIT_COUNTER') ? 'PENDING LAND PLAY' : 'RESOLVING EFFECT';
-      const labelText = this.add.text(490, 272, label, {
-        fontSize: '11px',
-        fontFamily: 'Outfit, sans-serif',
-        fontWeight: '700',
-        fill: '#fbbf24',
-        backgroundColor: 'rgba(15, 23, 42, 0.85)',
-        padding: { x: 8, y: 4 }
-      }).setOrigin(0.5);
-      this.cardsGroup.add(labelText);
+      if (gameState.whose_turn === 'you') {
+        let label;
+        if (gameState.phase === 'AWAIT_COUNTER') {
+          label = 'Counter Land?';
+        } else {
+          const resolveLabels = {
+            plains:   'Select Played Land',
+            swamp:    "Select from Opponent's Hand",
+            mountain: "Select Opponent's Played Land",
+            forest:   'Select From Graveyard',
+          };
+          label = resolveLabels[pending.land_type];
+        }
+        const labelText = this.add.text(490, 272, label, {
+          fontSize: '14px',
+          fontFamily: 'Outfit, sans-serif',
+          fontWeight: '700',
+          fill: '#fbbf24',
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          padding: { x: 8, y: 4 }
+        }).setOrigin(0.5);
+        labelText.setDepth(2000);
+        this.cardsGroup.add(labelText);
+      }
     }
   }
 }
@@ -968,19 +973,21 @@ function handleCardUIInteraction(cardUI) {
 
   // 1. PLAY OR PASS PHASE
   if (gameState.phase === 'PLAY_OR_PASS') {
-    // We can only select cards in our own hand to play
-    const inHand = myData.hand_card || (() => {
-      return gameState.my_hand.some(c => c.card_id === cardUI.cardId);
-    })();
-    
+    // Check if the clicked card is in our hand
+    const inHand = gameState.my_hand.some(c => c.card_id === cardUI.cardId);
+
     if (inHand) {
+      // Clicking a selected card deselects it; clicking an unselected card plays it immediately
       if (selectedCardsInHand.includes(cardUI.cardId)) {
         selectedCardsInHand = [];
+        if (gameScene) gameScene.drawBoard();
+        updateControls();
       } else {
-        selectedCardsInHand = [cardUI.cardId];
+        // Play the card immediately
+        sendGameAction('PLAY_LAND', { card_id: cardUI.cardId });
+        selectedCardsInHand = [];
+        updateControls();
       }
-      if (gameScene) gameScene.drawBoard();
-      updateControls();
     }
   }
 
@@ -1112,14 +1119,12 @@ function handleCounterAutoRun() {
 
 // Update enabled/disabled status of buttons in the sidebar
 function updateControls() {
-  const btnPlay = document.getElementById('btn-play-land');
   const btnPass = document.getElementById('btn-pass-turn');
   const btnCounter = document.getElementById('btn-counter-play');
   const btnAllow = document.getElementById('btn-allow-play');
   const btnReset = document.getElementById('btn-reset-selection');
 
   // Disable all by default
-  btnPlay.disabled = true;
   btnPass.disabled = true;
   btnCounter.disabled = true;
   btnAllow.disabled = true;
@@ -1133,10 +1138,6 @@ function updateControls() {
   if (gameState.phase === 'PLAY_OR_PASS') {
     btnPass.disabled = false;
     btnReset.disabled = (selectedCardsInHand.length === 0);
-
-    if (selectedCardsInHand.length === 1) {
-      btnPlay.disabled = false;
-    }
   }
 
   // AWAIT COUNTER PHASE
@@ -1396,14 +1397,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Action controls listeners
-  document.getElementById('btn-play-land').onclick = () => {
-    if (selectedCardsInHand.length === 1) {
-      sendGameAction('PLAY_LAND', { card_id: selectedCardsInHand[0] });
-      selectedCardsInHand = [];
-      updateControls();
-    }
-  };
-
   document.getElementById('btn-pass-turn').onclick = () => {
     sendGameAction('PASS_TURN');
     selectedCardsInHand = [];
