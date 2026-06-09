@@ -246,6 +246,48 @@ class BasicLandGameScene extends Phaser.Scene {
     // Draw divider between Opponent and Player boards
     gridGraphics.lineBetween(50, 350, 930, 350);
     
+    // Zone borders and labels
+    const zoneBorders = this.add.graphics();
+
+    // Shared zone dimensions
+    const zoneX = 155;
+    const zoneW = 615;
+    const zoneH = 140;
+
+    // -- Opponent hand border
+    zoneBorders.lineStyle(1, 0x475569, 0.5);
+    zoneBorders.strokeRoundedRect(zoneX, 28, zoneW, zoneH, 8);
+
+    // -- Opponent in-play border
+    zoneBorders.lineStyle(1, 0x475569, 0.5);
+    zoneBorders.strokeRoundedRect(zoneX, 175, zoneW, zoneH, 8);
+
+    // -- Player in-play border
+    zoneBorders.lineStyle(1, 0x475569, 0.5);
+    zoneBorders.strokeRoundedRect(zoneX, 385, zoneW, zoneH, 8);
+
+    // -- Player hand border
+    zoneBorders.lineStyle(1, 0x475569, 0.5);
+    zoneBorders.strokeRoundedRect(zoneX, 533, zoneW, zoneH, 8);
+
+    // Zone label style shared config
+    const zoneLabelStyle = {
+      fontSize: '10px',
+      fontFamily: 'Outfit, sans-serif',
+      fontStyle: 'bold',
+      fill: '#64748b',
+      backgroundColor: 'rgba(15, 23, 42, 0.9)',
+      padding: { x: 5, y: 2 }
+    };
+
+    // Opponent zone labels (top-left corner of each border)
+    this.add.text(zoneX + 8, 28 + 5,    "OPPONENT'S HAND",     zoneLabelStyle);
+    this.add.text(zoneX + 8, 175 + 5,   "OPPONENT'S LANDS",    zoneLabelStyle);
+
+    // Player zone labels
+    this.add.text(zoneX + 8, 385 + 5,   'YOUR LANDS',          zoneLabelStyle);
+    this.add.text(zoneX + 8, 533 + 5,   'YOUR HAND',           zoneLabelStyle);
+    
     // Handle card click events in the scene
     this.events.on('cardClicked', (cardUI) => {
       handleCardUIInteraction(cardUI);
