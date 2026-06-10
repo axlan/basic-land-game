@@ -44,22 +44,18 @@ Every land has a unique effect when played, making each play a potential turning
 
 1. **Draw** — The active player draws the top card from their library.
 2. **Play or Pass** — You may either play one land from your hand (triggering its effect), or pass the turn without playing.
-3. **Counter Window** — After a land is announced, the *inactive* player has a brief window to counter it (see below). The active player cannot respond to their own counter.
+3. **Counter Window** — After a land is announced, the *inactive* player has a brief window to counter it (see below). If the land is countered, the players go back and forth with counters until one player passes.
 4. **Effect Resolution** — If the land resolves, any targeting effects (Mountain, Forest, Swamp, Plains) are resolved by the active player.
 
 ### The Counter Window
 
-After any land is announced and its targets declared (Mountain, Plains), the non-active player may choose to **Counter** by discarding one Island plus one other land from hand. This sends the played land to the active player's graveyard with no effect. Countering a draw (Island) is legal but rarely worthwhile.
-
-Crucially, Swamp's discard target is not revealed until *after* the counter window, so you must decide to counter before knowing which card you'll lose.
+After any land is announced, the non-active player may choose to **Counter** by discarding one Island plus one other land from hand. This sends the played land to the active player's graveyard with no effect.
 
 ### Using the Interface
 
-- **Click a card in your hand** to select it. Selected cards glow indigo.
-- **Click "Play Selected Land"** to announce the play and open the counter window.
+- **Click a card in your hand** to play it.
 - **Click a card in the active zone or graveyard** during effect resolution to choose a target. Targetable cards pulse with a gold glow.
-- **"Pass Turn"** skips your land play for the turn.
-- **"Reset Selection"** clears your current card selection.
+- **"Pass Turn"** skips your land play for the turn, or skip your counter window.
 - Hovering over any face-up card in your hand shows a tooltip with the land's effect.
 
 ---
@@ -110,6 +106,7 @@ Your chosen strategy is remembered in `localStorage` between sessions.
 .
 ├── server.py          # FastAPI application & all REST + WebSocket routes
 ├── game_board.py      # Pure game logic (no I/O dependencies)
+├── test_game_board.py # game_board.py unit tests
 ├── pyproject.toml     # Python project manifest & dependencies
 └── static/
     ├── index.html     # Single-page game client
