@@ -142,6 +142,26 @@ Alternatively, run directly with uvicorn for more control:
 uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### Run in Docker
+
+Build the Docker image:
+
+```bash
+docker build -t basic-land-game .   
+```
+
+Then to run on port 8000:
+
+```bash
+docker run -it --rm -p 8000:8000 basic-land-game:latest
+```
+
+To run in the background, you can use:
+
+```bash
+docker run -d --rm -p 8000:8000 basic-land-game:latest
+```
+
 ### Health Check
 
 ```
