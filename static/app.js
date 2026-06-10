@@ -829,6 +829,50 @@ function updateWaitingList(waiting) {
 // ==========================================
 // WebSocket Connections
 // ==========================================
+function _handleSessionTimeout(reason) {
+  // Close both websockets cleanly
+  if (gameWs) {
+    gameWs.close();
+    gameWs = null;
+  }
+  if (lobbyWs) {
+    lobbyWs.close();
+    lobbyWs = null;
+  }
+  stopLobbyPing();
+  stopGamePing();
+
+  // Wipe all stored session state
+  localStorage.removeItem('basic_land_player_token');
+  localStorage.removeItem('basic_land_player_id');
+  localStorage.removeItem('basic_land_player_name');
+  localStorage.removeItem('basic_land_game_id');
+  localStorage.removeItem('basic_land_reserved_for');
+  playerToken = null;
+  playerId    = null;
+  playerName  = null;
+  gameId      = null;
+  gameState   = null;
+  selectedCardsInHand = [];
+  selectedTargetCard  = null;
+
+  // Return to the join screen
+  document.getElementById('game-screen').classList.add('hidden');
+  document.getElementById('game-over-overlay').style.display = 'none';
+  document.getElementById('lobby-screen').classList.remove('hidden');
+  document.getElementById('join-form').style.display = 'block';
+  document.getElementById('lobby-panel').style.display = 'none';
+
+  // Show the timeout reason on the username field so it's impossible to miss
+  const usernameError = document.getElementById('username-error');
+  const usernameInput = document.getElementById('username-input');
+  if (usernameError) {
+    usernameError.textContent = reason || 'Your session timed out. Please rejoin.';
+    usernameError.hidden = false;
+    if (usernameInput) usernameInput.style.borderColor = 'var(--accent-red)';
+  }
+}
+
 function initLobbyWs() {
   if (lobbyWs) {
     lobbyWs.close();
@@ -846,6 +890,8 @@ function initLobbyWs() {
       } else if (msg.type === 'game_started') {
         showToast(`Challenge accepted! Game started.`, 'success');
         startGameSession(msg.game_id, msg.your_seat, msg.opponent_name);
+      } else if (msg.type === 'session_timeout') {
+        _handleSessionTimeout(msg.reason);
       }
     } catch (e) {
       console.error('Lobby WS error parsing message:', e);
@@ -899,6 +945,8 @@ function initGameWs() {
         }
       } else if (msg.type === 'error') {
         showToast(msg.message, 'error');
+      } else if (msg.type === 'session_timeout') {
+        _handleSessionTimeout(msg.reason);
       }
     } catch (e) {
       console.error('Game WS error parsing message:', e);

@@ -64,6 +64,14 @@ After any land is announced, the non-active player may choose to **Counter** by 
 - **"Pass Turn"** skips your land play for the turn, or skip your counter window.
 - Hovering over any face-up card in your hand shows a tooltip with the land's effect.
 
+### Timeouts
+
+To avoid zombie player and games filling up the server, timeouts are enforced.
+
+Players are kicked out of the lobby if they don't start a game within 15 minutes.
+
+Players are kicked out of a game if a turn takes more than 15 minutes.
+
 ---
 
 ## The Lobby & Private Challenges

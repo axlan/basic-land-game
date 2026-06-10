@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from typing import Optional
 
@@ -65,6 +66,13 @@ from game_board import (
     GameAction,
     GamePhase,
 )
+
+# ===========================================================================
+# Timeout constants
+# ===========================================================================
+
+LOBBY_IDLE_SECONDS = 15 * 60   # 15 minutes — kick from waiting lobby
+TURN_IDLE_SECONDS  = 15 * 60   # 15 minutes — auto-forfeit idle turn
 
 # ===========================================================================
 # Application
@@ -96,6 +104,7 @@ class PlayerRecord:
         self.reserved_for_name: Optional[str] = reserved_for_name  # only this opponent can challenge
         self.game_id:          Optional[str] = None   # set when in a game
         self.game_seat:        Optional[int] = None   # 0 or 1
+        self.joined_at:        float         = time.monotonic()  # for lobby idle timeout
 
 
 class GameRecord:
@@ -108,6 +117,8 @@ class GameRecord:
         self.ws_connections: dict[int, list[WebSocket]] = {0: [], 1: []}
         # Track how many event-log entries each seat has already received
         self.log_sent: dict[int, int] = {0: 0, 1: 0}
+        # Timestamp of when the current turn began, for idle-turn enforcement
+        self.turn_started_at: float = time.monotonic()
 
 
 # Global in-process store
@@ -250,6 +261,116 @@ async def _push_lobby_update() -> None:
             dead_players.append(pid)
     for pid in dead_players:
         _lobby_connections.pop(pid, None)
+
+
+# ===========================================================================
+# State cleanup helpers
+# ===========================================================================
+
+async def _evict_lobby_player(player: PlayerRecord, reason: str = "timeout") -> None:
+    """
+    Remove a player from every in-memory store and notify their lobby
+    WebSocket connections.  Safe to call even if the player is not waiting.
+    """
+    _waiting_players.pop(player.player_id, None)
+    _players_by_token.pop(player.token, None)
+
+    msg = {"type": "session_timeout", "reason": reason}
+    for ws in list(_lobby_connections.get(player.player_id, [])):
+        try:
+            await ws.send_json(msg)
+            await ws.close()
+        except Exception:
+            pass
+    _lobby_connections.pop(player.player_id, None)
+
+
+async def _evict_game_players(record: GameRecord, timed_out_seat: int) -> None:
+    """
+    Force-forfeit the idle player, push the final game_state to both seats,
+    then send a session_timeout notification and clean up all state.
+    """
+    game_id = record.game_id
+
+    # Apply forfeit on behalf of the idle player
+    forfeit_action = GameAction(
+        action_type=ActionType.FORFEIT,
+        player_id=timed_out_seat,
+    )
+    record.game.apply_action(forfeit_action)
+
+    # Push the final game state before we tear anything down
+    await _push_game_state(record)
+
+    # Notify both players with a session_timeout so the frontend can redirect
+    idle_name    = record.players[timed_out_seat].name
+    other_seat   = 1 - timed_out_seat
+    messages = {
+        timed_out_seat: {
+            "type":   "session_timeout",
+            "reason": "You were removed for inactivity.",
+        },
+        other_seat: {
+            "type":   "session_timeout",
+            "reason": f"{idle_name} was removed for inactivity. You have been returned to the lobby.",
+        },
+    }
+
+    for seat in (0, 1):
+        for ws in list(record.ws_connections.get(seat, [])):
+            try:
+                await ws.send_json(messages[seat])
+                await ws.close()
+            except Exception:
+                pass
+        record.ws_connections[seat].clear()
+
+    # Tear down player and game records
+    for player in record.players:
+        _waiting_players.pop(player.player_id, None)
+        _players_by_token.pop(player.token, None)
+        _lobby_connections.pop(player.player_id, None)
+
+    _games.pop(game_id, None)
+
+
+# ===========================================================================
+# Background timeout reaper
+# ===========================================================================
+
+async def _timeout_reaper() -> None:
+    """
+    Runs forever (started on application startup).  Every 30 seconds it:
+      1. Evicts lobby players idle for > LOBBY_IDLE_SECONDS.
+      2. Auto-forfeits in-game players whose turn has lasted > TURN_IDLE_SECONDS.
+    """
+    while True:
+        await asyncio.sleep(30)
+        now = time.monotonic()
+
+        # --- Lobby idle evictions ---
+        for player in list(_waiting_players.values()):
+            if now - player.joined_at > LOBBY_IDLE_SECONDS:
+                await _evict_lobby_player(
+                    player,
+                    reason="You were removed from the lobby after 15 minutes of inactivity.",
+                )
+        # Refresh lobby list if anyone was evicted
+        if _lobby_connections:
+            await _push_lobby_update()
+
+        # --- In-game turn idle forfeits ---
+        for record in list(_games.values()):
+            if record.game.phase == GamePhase.GAME_OVER:
+                continue
+            if now - record.turn_started_at > TURN_IDLE_SECONDS:
+                idle_seat = record.game.active_player_idx
+                await _evict_game_players(record, timed_out_seat=idle_seat)
+
+
+@app.on_event("startup")
+async def _start_reaper() -> None:
+    asyncio.create_task(_timeout_reaper())
 
 
 # ===========================================================================
@@ -505,6 +626,10 @@ async def submit_action(
 
     result: ActionResult = record.game.apply_action(game_action)
 
+    if result.success:
+        # Reset the idle-turn clock whenever an action is accepted
+        record.turn_started_at = time.monotonic()
+
     if result.success and record.game.phase == GamePhase.GAME_OVER:
         for p in record.players:
             p.game_id = None
@@ -662,6 +787,10 @@ async def game_ws(
                 "message": result.message,
                 "events":  result.events,
             })
+
+            if result.success:
+                # Reset the idle-turn clock whenever an action is accepted
+                record.turn_started_at = time.monotonic()
 
             if result.success and record.game.phase == GamePhase.GAME_OVER:
                 for p in record.players:
