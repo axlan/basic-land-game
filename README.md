@@ -2,7 +2,11 @@
 
 A two-player browser-based card game inspired by the Basic Land Game variant of Magic: The Gathering. Players race to assemble a winning set of lands before their opponent.
 
+I host a build of this game at: <https://basic-land-game.robopenguins.com>
+
 ![Game screenshot](doc/game_screen.png)
+
+See <https://www.robopenguins.com/basic-land-game/> for the build process for this game.
 
 ---
 
