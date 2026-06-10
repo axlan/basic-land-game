@@ -4,9 +4,9 @@ A two-player browser-based card game inspired by the Basic Land Game variant of 
 
 I host a build of this game at: <https://basic-land-game.robopenguins.com>
 
-![Game screenshot](doc/game_screen.png)
+[<img src="doc/game_screen.png">](https://basic-land-game.robopenguins.com)
 
-See <https://www.robopenguins.com/basic-land-game/> for the build process for this game.
+See <https://www.robopenguins.com/basic-land-game/> for a blog post on developing this game.
 
 ---
 
@@ -39,6 +39,8 @@ Every land has a unique effect when played, making each play a potential turning
 | 🔥 Mountain | Destroy one of your opponent's active lands. Target is declared before they can counter. |
 | ☀️ Plains | Copy the effect of one of your other non-Plains active lands. Target is declared before the opponent can counter. |
 | 💀 Swamp | Look at your opponent's full hand and choose one card for them to discard. The target is chosen *after* the counter window closes, so your opponent must commit to countering blind. |
+
+**As far as I know, there's no official rule set for this game. I chose to use this rules set variation.**
 
 ---
 
