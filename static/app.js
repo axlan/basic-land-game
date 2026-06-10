@@ -595,11 +595,12 @@ class BasicLandGameScene extends Phaser.Scene {
 
       if (gameState.whose_turn === 'you') {
         let label;
-        if (gameState.phase === 'AWAIT_COUNTER') {
-          label = 'Counter Land?';
-        }
-        else if (gameState.phase === 'AWAIT_COUNTER_COUNTER') {
-          label = 'Counter Counter?';
+        if (gameState.phase.startsWith('AWAIT_COUNTER')) {
+          if (selectedCardsInHand.length === 1) {
+            label = 'Pick Additional Card to Discard';
+          } else {
+            label = 'Counter? Pick an Island or Pass';
+          }
         }
         else {
           const resolveLabels = {
@@ -1037,21 +1038,43 @@ function handleCardUIInteraction(cardUI) {
     }
   }
 
-  // 2. AWAIT COUNTER PHASE
+  // 2. AWAIT COUNTER PHASE — two-step: Island first, then any other card (auto-fires)
   else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
-    // Non-active player is selecting counter spell cost (Island + 1 other card in hand)
     const inHand = gameState.my_hand.some(c => c.card_id === cardUI.cardId);
-    if (inHand) {
-      if (selectedCardsInHand.includes(cardUI.cardId)) {
-        selectedCardsInHand = selectedCardsInHand.filter(id => id !== cardUI.cardId);
-      } else {
-        selectedCardsInHand.push(cardUI.cardId);
-        if (selectedCardsInHand.length > 2) {
-          selectedCardsInHand.shift(); // keep max 2
-        }
+    if (!inHand) return;
+
+    const myHand = gameState.my_hand || [];
+    const clickedCard = myHand.find(c => c.card_id === cardUI.cardId);
+    if (!clickedCard) return;
+
+    // Step 1: No island selected yet — only allow selecting an Island
+    if (selectedCardsInHand.length === 0) {
+      if (clickedCard.land_type !== 'island') {
+        showToast('Select an Island first to counter.', 'error');
+        return;
       }
+      selectedCardsInHand = [cardUI.cardId];
       if (gameScene) gameScene.drawBoard();
       updateControls();
+    }
+    // Step 2: Island already selected — clicking island again deselects; any other card fires counter
+    else if (selectedCardsInHand.length === 1) {
+      const islandId = selectedCardsInHand[0];
+
+      if (cardUI.cardId === islandId) {
+        // Deselect the island
+        selectedCardsInHand = [];
+        if (gameScene) gameScene.drawBoard();
+        updateControls();
+      } else {
+        // Second card chosen — fire the counter immediately
+        sendGameAction('COUNTER_LAND', {
+          card_id: islandId,
+          counter_second_card_id: cardUI.cardId
+        });
+        selectedCardsInHand = [];
+        updateControls();
+      }
     }
   }
 
@@ -1091,9 +1114,18 @@ function getTargetableCardIds() {
     gameState.my_hand.forEach(c => ids.add(c.card_id));
   }
 
-  // Under AWAIT_COUNTER, highlight hand cards (for selecting Island + other)
+  // Under AWAIT_COUNTER: highlight Islands first; once one is selected highlight all other hand cards
   else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
-    gameState.my_hand.forEach(c => ids.add(c.card_id));
+    const hand = gameState.my_hand || [];
+    if (selectedCardsInHand.length === 0) {
+      // Step 1: only Islands are valid picks
+      hand.forEach(c => {
+        if (c.land_type === 'island') ids.add(c.card_id);
+      });
+    } else {
+      // Step 2: island chosen — highlight island (to allow deselect) + all other hand cards
+      hand.forEach(c => ids.add(c.card_id));
+    }
   }
 
   // Under RESOLVE_EFFECT, highlight depending on land type
@@ -1161,15 +1193,9 @@ function handleCounterAutoRun() {
 // Update enabled/disabled status of buttons in the sidebar
 function updateControls() {
   const btnPass = document.getElementById('btn-pass-turn');
-  const btnCounter = document.getElementById('btn-counter-play');
-  const btnAllow = document.getElementById('btn-allow-play');
-  const btnReset = document.getElementById('btn-reset-selection');
 
-  // Disable all by default
+  // Disable by default
   btnPass.disabled = true;
-  btnCounter.disabled = true;
-  btnAllow.disabled = true;
-  btnReset.disabled = true;
 
   if (!gameState || gameState.whose_turn !== 'you') {
     return;
@@ -1178,23 +1204,11 @@ function updateControls() {
   // PLAY OR PASS PHASE
   if (gameState.phase === 'PLAY_OR_PASS') {
     btnPass.disabled = false;
-    btnReset.disabled = (selectedCardsInHand.length === 0);
   }
 
-  // AWAIT COUNTER PHASE
+  // AWAIT COUNTER PHASE — btn-pass-turn acts as "Allow Land"
   else if (gameState.phase.startsWith('AWAIT_COUNTER')) {
-    btnAllow.disabled = false;
-    btnReset.disabled = (selectedCardsInHand.length === 0);
-
-    // Verify counter conditions: 2 cards, one is Island
-    if (selectedCardsInHand.length === 2) {
-      const myHand = gameState.my_hand || [];
-      const selCardsObj = myHand.filter(c => selectedCardsInHand.includes(c.card_id));
-      const hasIsland = selCardsObj.some(c => c.land_type === 'island');
-      if (hasIsland && selCardsObj.length === 2) {
-        btnCounter.disabled = false;
-      }
-    }
+    btnPass.disabled = false;
   }
 }
 
@@ -1439,40 +1453,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Action controls listeners
   document.getElementById('btn-pass-turn').onclick = () => {
-    sendGameAction('PASS_TURN');
-    selectedCardsInHand = [];
-    updateControls();
-  };
-
-  document.getElementById('btn-allow-play').onclick = () => {
-    sendGameAction('ALLOW_LAND');
-    selectedCardsInHand = [];
-    updateControls();
-  };
-
-  document.getElementById('btn-counter-play').onclick = () => {
-    if (selectedCardsInHand.length === 2) {
-      // Find Island
-      const myHand = gameState.my_hand || [];
-      const selCardsObj = myHand.filter(c => selectedCardsInHand.includes(c.card_id));
-      const island = selCardsObj.find(c => c.land_type === 'island');
-      const other = selCardsObj.find(c => c.card_id !== island.card_id);
-
-      if (island && other) {
-        sendGameAction('COUNTER_LAND', {
-          card_id: island.card_id,
-          counter_second_card_id: other.card_id
-        });
-        selectedCardsInHand = [];
-        updateControls();
-      }
+    if (gameState && gameState.phase.startsWith('AWAIT_COUNTER')) {
+      // In counter window: pass means allow the land to resolve
+      sendGameAction('ALLOW_LAND');
+      selectedCardsInHand = [];
+      updateControls();
+    } else {
+      sendGameAction('PASS_TURN');
+      selectedCardsInHand = [];
+      updateControls();
     }
-  };
-
-  document.getElementById('btn-reset-selection').onclick = () => {
-    selectedCardsInHand = [];
-    if (gameScene) gameScene.drawBoard();
-    updateControls();
   };
 
   // Strategy Radio group selections

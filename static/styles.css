@@ -450,23 +450,6 @@ input[type="text"]:focus {
   color: #0b0f19;
 }
 
-#btn-allow-play {
-  background: var(--accent-blue);
-  color: #ffffff;
-}
-
-#btn-counter-play {
-  background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
-  color: #ffffff;
-  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.3);
-}
-
-#btn-reset-selection {
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.2);
-  color: var(--accent-red);
-}
-
 .btn-action:active:not(:disabled) {
   transform: scale(0.98);
 }
