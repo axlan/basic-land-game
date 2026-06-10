@@ -960,6 +960,23 @@ input[type="text"]:focus {
   opacity: 0.8;
 }
 
+.input-error {
+  font-size: 0.8rem;
+  color: var(--accent-red);
+  margin-top: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  animation: errorShake 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes errorShake {
+  10%, 90%  { transform: translateX(-2px); }
+  20%, 80%  { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60%  { transform: translateX(4px); }
+}
+
 /* ==========================================
    LOBBY — reservation banner & badge
    ========================================== */

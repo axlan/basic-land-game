@@ -672,7 +672,14 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // ==========================================
 async function joinLobby() {
   const usernameInput = document.getElementById('username-input');
+  const usernameError = document.getElementById('username-error');
   const name = usernameInput.value.trim();
+
+  // Clear any previous error
+  usernameError.hidden = true;
+  usernameError.textContent = '';
+  usernameInput.style.borderColor = '';
+
   if (!name) {
     showToast('Name must not be empty!', 'error');
     return;
@@ -717,7 +724,16 @@ async function joinLobby() {
     initLobbyWs();
     refreshLobby();
   } catch (err) {
-    showToast(err.message, 'error');
+    if (err.status === 409) {
+      // Name already taken — show inline error on the field
+      usernameError.textContent = `"${name}" is already taken. Please choose a different name.`;
+      usernameError.hidden = false;
+      usernameInput.style.borderColor = 'var(--accent-red)';
+      usernameInput.focus();
+      usernameInput.select();
+    } else {
+      showToast(err.message, 'error');
+    }
   }
 }
 
@@ -1448,6 +1464,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('username-input').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
       joinLobby();
+    }
+  });
+
+  // Clear username error as soon as the user edits the field
+  document.getElementById('username-input').addEventListener('input', () => {
+    const usernameError = document.getElementById('username-error');
+    const usernameInput = document.getElementById('username-input');
+    if (!usernameError.hidden) {
+      usernameError.hidden = true;
+      usernameError.textContent = '';
+      usernameInput.style.borderColor = '';
     }
   });
 
