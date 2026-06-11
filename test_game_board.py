@@ -231,8 +231,7 @@ def test_swamp_thoughtseize():
     assert target_card in opponent.graveyard
     # After discarding one card from a revealed hand, the remaining cards stay revealed
     # (5 cards revealed initially, 1 discarded, so 4 remain revealed)
-    print(game.public_state())
-    assert len(game.public_state()['players'][opponent_idx]['revealed_hand']) == revealed_after_swamp - 1
+    assert len(game.public_state().players[opponent_idx].revealed_hand) == revealed_after_swamp - 1
     print("PASS test_swamp_thoughtseize")
 
 
@@ -648,10 +647,9 @@ def test_plains_cannot_copy_plains():
 def test_public_state_hides_hand():
     game = make_game()
     state = game.public_state()
-    for p_state in state["players"]:
-        # hand_size is present but individual unrevealed cards are not
-        assert "hand_size" in p_state
-        assert len(p_state["revealed_hand"]) == 0  # nothing revealed yet
+    for p_state in state.players:
+        # hand_size is present but individual unrevealed cards are notin p_state
+        assert len(p_state.revealed_hand) == 0  # nothing revealed yet
     print("PASS test_public_state_hides_hand")
 
 

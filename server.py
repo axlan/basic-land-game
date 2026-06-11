@@ -177,7 +177,7 @@ def _public_state_for(record: GameRecord, seat: int) -> dict:
     New event-log entries since the last call are included.
     """
     game  = record.game
-    base  = game.public_state()
+    base  = game.public_state().to_dict()
 
     # Add player names
     for i, ps in enumerate(base["players"]):

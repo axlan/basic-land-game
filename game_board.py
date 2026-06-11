@@ -14,7 +14,7 @@ Land effects:
             the opponent's graveyard instead.
   Mountain — destroy one of the opponent's active lands (target declared
              before the opponent can respond with a counter).
-  Forest   — return any land from either graveyard to your hand.
+  Forest   — return a land from your graveyard to your hand.
   Swamp    — look at the opponent's hand and choose a card for them to
              discard (target chosen at resolution, so Island-counter must
              be committed before the discard target is known).
@@ -78,15 +78,20 @@ class ActionType(Enum):
 # Data classes
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class Card:
     """A single land card with a unique runtime ID."""
     land_type: LandType
     card_id:   str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         return f"Card({self.land_type.value}, id={self.card_id[:8]})"
 
+    def __repr__(self) -> str:
+        return str(self)
+
+    def to_dict(self) -> dict:
+        return {"card_id": self.card_id, "land_type": self.land_type.value}
 
 @dataclass
 class PlayerState:
@@ -138,6 +143,60 @@ class PlayerState:
         from collections import Counter
         counts = Counter(c.land_type for c in self.active)
         return any(v >= 5 for v in counts.values())
+
+
+@dataclass(frozen=True)
+class PublicPlayerState:
+    """Public (opponent-safe) snapshot of one player's state."""
+    player_id:    int
+    library_size: int
+    hand_size:    int
+    revealed_hand: list[Card]
+    active:       list[Card]
+    graveyard:    list[Card]
+
+    def to_dict(self) -> dict:
+        return {
+            "player_id":    self.player_id,
+            "library_size": self.library_size,
+            "hand_size":    self.hand_size,
+            "revealed_hand": [c.to_dict() for c in self.revealed_hand],
+            "active":       [c.to_dict() for c in self.active],
+            "graveyard":    [c.to_dict() for c in self.graveyard],
+        }
+
+
+@dataclass
+class PublicGameState:
+    """
+    Serialisable snapshot of all public game information.
+
+    Hand sizes are shown; individual hand cards are hidden unless revealed.
+    Library sizes are shown; order is hidden.
+    """
+    phase:        GamePhase # Serialized as GamePhase.name
+    active_player: int
+    turn_number:  int
+    winner:       Optional[int]
+    pending_play: Optional[Card]  # Serialized as Card.__str__() or None
+    players:      list[PublicPlayerState]
+
+    def get_awaited_player(self) -> int:
+        """Returns the index of the player who needs to take the next action."""
+        if self.phase == GamePhase.AWAIT_COUNTER:
+            # Non-active player decides whether to counter
+            return 1 - self.active_player
+        return self.active_player
+
+    def to_dict(self) -> dict:
+        return {
+            "phase":         self.phase.name,
+            "active_player": self.active_player,
+            "turn_number":   self.turn_number,
+            "winner":        self.winner,
+            "pending_play":  str(self.pending_play),
+            "players":       [p.to_dict() for p in self.players],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -280,36 +339,32 @@ class BasicLandGame:
     # Public read-only helpers
     # ------------------------------------------------------------------
 
-    def public_state(self) -> dict:
+    def public_state(self) -> PublicGameState:
         """
-        Return a serialisable snapshot of all public information.
+        Return a snapshot of all public information as a PublicGameState.
         Hand sizes are shown; individual hand cards are hidden unless
         revealed.  Library sizes are shown; order is hidden.
+
+        Call ``.to_dict()`` on the result for a JSON-serialisable representation.
         """
-        result = {
-            "phase":              self.phase.name,
-            "active_player":      self.active_player_idx,
-            "turn_number":        self.turn_number,
-            "winner":             self.winner,
-            "pending_play":       self._pending_card.__repr__() if self._pending_card else None,
-            "players":            [],
-        }
+        player_snapshots = []
         for p in self.players:
-            revealed = [
-                {"card_id": c.card_id, "land_type": c.land_type.value}
-                for c in p.hand if c.card_id in p.revealed_card_ids
-            ]
-            result["players"].append({
-                "player_id":    p.player_id,
-                "library_size": len(p.library),
-                "hand_size":    len(p.hand),
-                "revealed_hand": revealed,
-                "active":  [{"card_id": c.card_id, "land_type": c.land_type.value}
-                            for c in p.active],
-                "graveyard": [{"card_id": c.card_id, "land_type": c.land_type.value}
-                              for c in p.graveyard],
-            })
-        return result
+            player_snapshots.append(PublicPlayerState(
+                player_id=p.player_id,
+                library_size=len(p.library),
+                hand_size=len(p.hand),
+                revealed_hand=[c for c in p.hand if c.card_id in p.revealed_card_ids],
+                active=list(p.active),
+                graveyard=list(p.graveyard),
+            ))
+        return PublicGameState(
+            phase=self.phase,
+            active_player=self.active_player_idx,
+            turn_number=self.turn_number,
+            winner=self.winner,
+            pending_play=self._pending_card,
+            players=player_snapshots,
+        )
 
     def player_hand(self, player_id: int) -> list[dict]:
         """
@@ -538,10 +593,9 @@ class BasicLandGame:
                 )
 
         if card.land_type == LandType.FOREST:
-            # Any graveyard (both players)
-            all_gy = self.players[0].graveyard + self.players[1].graveyard
-            if not all_gy:
-                self._log("Forest effect: no lands in any graveyard.")
+            grave_yard = self.players[self.active_player_idx].graveyard
+            if not grave_yard:
+                self._log("Forest effect: no lands in graveyard.")
                 self._pending_card = None
                 self._advance_turn()
                 return ActionResult.ok(
@@ -589,7 +643,7 @@ class BasicLandGame:
         self.phase = GamePhase.RESOLVE_EFFECT
         prompts = {
             LandType.MOUNTAIN: "Provide SPECIFY_TARGET: target_card_id = opponent active land to destroy.",
-            LandType.FOREST:   "Provide SPECIFY_TARGET: target_card_id = any graveyard land to return to hand.",
+            LandType.FOREST:   "Provide SPECIFY_TARGET: target_card_id = graveyard land to return to hand.",
             LandType.SWAMP:    "Provide SPECIFY_TARGET: target_card_id = opponent hand card to discard.",
             LandType.PLAINS:   "Provide SPECIFY_TARGET: target_card_id = one of your own active non-Plains lands to copy.",
         }
@@ -736,8 +790,8 @@ class BasicLandGame:
                 )
 
         if target.land_type == LandType.FOREST:
-            all_gy = self.players[0].graveyard + self.players[1].graveyard
-            if not all_gy:
+            grave_yard = self.players[self.active_player_idx].graveyard
+            if not grave_yard:
                 self._log("Copied Forest: no lands in graveyard.")
                 self._pending_card = None
                 self._advance_turn()

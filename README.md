@@ -224,3 +224,7 @@ The client is a single HTML page with two main JavaScript concerns:
 **Phaser 3 rendering** (`app.js`, `BasicLandGameScene`) draws the game board as a Phaser canvas injected into `#game-canvas-container`. Each card is a `CardUI` container (sprite + emoji text + short ID label) with hover animations and click events that feed back into the selection state. The board is fully redrawn (`drawBoard()`) on every incoming `game_state` push — opponent cards are rendered face-down unless revealed (e.g. by a Swamp effect). All card textures are generated programmatically at runtime; there are no image file dependencies.
 
 The sidebar (`#game-sidebar`) is plain HTML/CSS and is updated in parallel with the Phaser canvas whenever game state changes.
+
+## TODO
+ - Add eye icon to indicate cards in hand that were revealed
+ - Add customizable card art
