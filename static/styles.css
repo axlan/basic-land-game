@@ -1103,3 +1103,55 @@ input[type="text"]:focus {
 .btn-ai:hover {
   box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45);
 }
+
+/* ==========================================
+   SITE FOOTER
+   ========================================== */
+
+#site-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  padding: 0.4rem 1rem;
+  background: rgba(10, 14, 28, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+#site-footer a {
+  color: var(--accent-purple);
+  text-decoration: none;
+  opacity: 0.85;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+#site-footer a:hover {
+  opacity: 1;
+  color: #a5b4fc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.footer-divider {
+  opacity: 0.35;
+}
+
+/* Give the lobby panel a little bottom breathing room */
+#lobby-screen {
+  margin-bottom: 2.5rem;
+}
+
+/* Keep the game sidebar's exit button clear of the footer */
+#game-sidebar {
+  padding-bottom: 3rem;
+}
