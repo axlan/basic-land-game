@@ -366,15 +366,12 @@ class BasicLandGame:
             players=player_snapshots,
         )
 
-    def player_hand(self, player_id: int) -> list[dict]:
+    def player_hand(self, player_id: int) -> list[Card]:
         """
         Return the full hand for a given player (intended for that player's
         private view only — the UI must not expose this to the opponent).
         """
-        return [
-            {"card_id": c.card_id, "land_type": c.land_type.value}
-            for c in self.players[player_id].hand
-        ]
+        return self.players[player_id].hand
 
     # ------------------------------------------------------------------
     # Action handlers

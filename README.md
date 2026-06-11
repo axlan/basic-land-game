@@ -15,7 +15,8 @@ See <https://www.robopenguins.com/basic-land-game/> for a blog post on developin
 1. [Game Overview](#game-overview)
 2. [How to Play](#how-to-play)
 3. [The Lobby & Private Challenges](#the-lobby--private-challenges)
-4. [Counter Spell Bluff Setting](#counter-bluff-setting)
+4. [Playing vs Bot](#playing-vs-bot)
+5. [Counter Spell Bluff Setting](#counter-bluff-setting)
 5. [Installation & Running the Server](#installation--running-the-server)
 6. [Architecture Overview](#architecture-overview)
 
@@ -93,6 +94,14 @@ Challenging someone is instant — click their name in the waiting list to start
 
 ---
 
+## Playing vs Bot
+
+Select the **🤖 vs Bot** tab on the start screen and click **"Play vs Bot"** to jump straight into a solo game — no display name or lobby matchmaking required.
+
+This bot is not particularly smart, but I tried to give it enough logic to usually make reasonable moves.
+
+---
+
 ## Counter Spell Bluff Setting
 
 During a game, the sidebar includes a **Counter Spell Strategy** selector with three modes. This controls whether you are automatically prompted to counter each opponent land play or whether the client handles the decision for you:
@@ -120,6 +129,7 @@ Your chosen strategy is remembered in `localStorage` between sessions.
 .
 ├── server.py          # FastAPI application & all REST + WebSocket routes
 ├── game_board.py      # Pure game logic (no I/O dependencies)
+├── game_ai.py         # Heuristic AI player
 ├── test_game_board.py # game_board.py unit tests
 ├── pyproject.toml     # Python project manifest & dependencies
 └── static/
@@ -205,6 +215,7 @@ The server is entirely in-memory (no database) and manages two collections: a wa
 - `GET /lobby/waiting` — returns the personalised waiting list for the caller (reserved slots are filtered server-side).
 - `POST /lobby/challenge` — matches two players, constructs a `BasicLandGame`, and notifies both via WebSocket push.
 - `DELETE /lobby/leave` — removes the player from the waiting list.
+- `POST /games/vs-ai` — creates an immediate solo game against the built-in AI; returns a `player_token` and `game_id` with no lobby step required.
 - `GET /games/{game_id}/state` and `POST /games/{game_id}/action` — polling fallbacks; all normal play uses WebSockets.
 
 **WebSocket channels** carry live updates:
@@ -224,6 +235,8 @@ The client is a single HTML page with two main JavaScript concerns:
 **Phaser 3 rendering** (`app.js`, `BasicLandGameScene`) draws the game board as a Phaser canvas injected into `#game-canvas-container`. Each card is a `CardUI` container (sprite + emoji text + short ID label) with hover animations and click events that feed back into the selection state. The board is fully redrawn (`drawBoard()`) on every incoming `game_state` push — opponent cards are rendered face-down unless revealed (e.g. by a Swamp effect). All card textures are generated programmatically at runtime; there are no image file dependencies.
 
 The sidebar (`#game-sidebar`) is plain HTML/CSS and is updated in parallel with the Phaser canvas whenever game state changes.
+
+The start screen has a **vs Human / vs Bot tab switcher**. The vs Bot tab calls `POST /games/vs-ai` directly and stores only the returned token and game ID — no lobby WebSocket is opened, and on exit the player is returned to the vs Bot tab rather than re-registered in the lobby.
 
 ## TODO
  - Add eye icon to indicate cards in hand that were revealed

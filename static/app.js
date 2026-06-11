@@ -842,6 +842,8 @@ function _handleSessionTimeout(reason) {
   stopLobbyPing();
   stopGamePing();
 
+  isAiGame = false;
+
   // Wipe all stored session state
   localStorage.removeItem('basic_land_player_token');
   localStorage.removeItem('basic_land_player_id');
@@ -1392,6 +1394,18 @@ function returnToLobby() {
   document.getElementById('game-screen').classList.add('hidden');
   document.getElementById('lobby-screen').classList.remove('hidden');
 
+  // AI games go back to the join form (no lobby to re-enter)
+  if (isAiGame) {
+    isAiGame    = false;
+    playerToken = null;
+    playerName  = null;
+    localStorage.removeItem('basic_land_player_token');
+    document.getElementById('join-form').style.display = 'block';
+    document.getElementById('lobby-panel').style.display = 'none';
+    switchModeTab('ai');
+    return;
+  }
+
   // Put the player back in the waiting lobby
   apiCall('/lobby/join', 'POST', { name: playerName })
     .then(data => {
@@ -1441,17 +1455,20 @@ function forfeitAndExit() {
       stopGamePing();
 
       // Reset variables
+      const wasAiGame = isAiGame;
+      isAiGame    = false;
       playerToken = null;
-      playerId = null;
-      playerName = null;
-      gameId = null;
-      gameState = null;
+      playerId    = null;
+      playerName  = null;
+      gameId      = null;
+      gameState   = null;
 
       // Reset UI
       document.getElementById('game-screen').classList.add('hidden');
       document.getElementById('lobby-screen').classList.remove('hidden');
       document.getElementById('join-form').style.display = 'block';
       document.getElementById('lobby-panel').style.display = 'none';
+      if (wasAiGame) switchModeTab('ai');
 
       showToast('Exited game session. Register a new name to start fresh.', 'success');
     }, 50);
@@ -1503,10 +1520,15 @@ function handleResize() {
 document.addEventListener('DOMContentLoaded', () => {
   // Bind join button
   document.getElementById('btn-join-lobby').onclick = joinLobby;
+  document.getElementById('btn-play-ai').onclick = startVsAi;
   document.getElementById('btn-refresh-lobby').onclick = refreshLobby;
   document.getElementById('btn-leave-lobby').onclick = leaveLobby;
   document.getElementById('btn-exit-game').onclick = forfeitAndExit;
   document.getElementById('btn-return-lobby').onclick = returnToLobby;
+
+  // Mode tab switching
+  document.getElementById('tab-human').addEventListener('click', () => switchModeTab('human'));
+  document.getElementById('tab-ai').addEventListener('click',    () => switchModeTab('ai'));
 
   // Lobby username Enter key bind
   document.getElementById('username-input').addEventListener('keypress', (e) => {
@@ -1586,6 +1608,56 @@ document.addEventListener('DOMContentLoaded', () => {
   // Reconnection Check on page load
   checkSessionReconstruction();
 });
+
+// ==========================================
+// Mode Tab Switching
+// ==========================================
+function switchModeTab(mode) {
+  const humanTab   = document.getElementById('tab-human');
+  const aiTab      = document.getElementById('tab-ai');
+  const humanPanel = document.getElementById('tab-panel-human');
+  const aiPanel    = document.getElementById('tab-panel-ai');
+
+  const isHuman = mode === 'human';
+  humanTab.classList.toggle('active', isHuman);
+  aiTab.classList.toggle('active', !isHuman);
+  humanTab.setAttribute('aria-selected', String(isHuman));
+  aiTab.setAttribute('aria-selected', String(!isHuman));
+  humanPanel.classList.toggle('hidden', !isHuman);
+  aiPanel.classList.toggle('hidden', isHuman);
+}
+
+// ==========================================
+// VS-AI game start
+// ==========================================
+let isAiGame = false;
+
+async function startVsAi() {
+  const btn = document.getElementById('btn-play-ai');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+
+  try {
+    const data = await apiCall('/games/vs-ai', 'POST');
+
+    playerToken = data.player_token;
+    playerName  = 'Player';
+    playerId    = null;
+    isAiGame    = true;
+
+    localStorage.setItem('basic_land_player_token', playerToken);
+    localStorage.setItem('basic_land_game_id', data.game_id);
+    localStorage.removeItem('basic_land_player_id');
+    localStorage.removeItem('basic_land_player_name');
+
+    startGameSession(data.game_id, data.your_seat, 'AI Opponent');
+  } catch (err) {
+    showToast(err.message || 'Could not start AI game.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Play vs AI';
+  }
+}
 
 async function checkSessionReconstruction() {
   if (playerToken && gameId) {

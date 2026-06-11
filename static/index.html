@@ -34,17 +34,38 @@
     
     <!-- Phase 1: Join / Register -->
     <div id="join-form">
-      <div class="input-group">
-        <label for="username-input">Choose Your Display Name</label>
-        <input type="text" id="username-input" placeholder="Enter name (max 32 chars)..." maxlength="32">
-        <p id="username-error" class="input-error" hidden></p>
+
+      <!-- Mode Tabs -->
+      <div class="mode-tabs" role="tablist" aria-label="Game mode">
+        <button class="mode-tab active" id="tab-human" role="tab" aria-selected="true"  aria-controls="tab-panel-human">&#x2694;&#xFE0F; vs Human</button>
+        <button class="mode-tab"        id="tab-ai"    role="tab" aria-selected="false" aria-controls="tab-panel-ai">&#x1F916; vs Bot</button>
       </div>
-      <div class="input-group">
-        <label for="reserved-for-input">Play Against (optional)</label>
-        <input type="text" id="reserved-for-input" placeholder="Leave blank to appear to everyone..." maxlength="32">
-        <p class="input-hint">If set, only this player will see your lobby slot.</p>
+
+      <!-- Human tab panel -->
+      <div id="tab-panel-human" class="tab-panel" role="tabpanel" aria-labelledby="tab-human">
+        <div class="input-group">
+          <label for="username-input">Choose Your Display Name</label>
+          <input type="text" id="username-input" placeholder="Enter name (max 32 chars)..." maxlength="32">
+          <p id="username-error" class="input-error" hidden></p>
+        </div>
+        <div class="input-group">
+          <label for="reserved-for-input">Play Against (optional)</label>
+          <input type="text" id="reserved-for-input" placeholder="Leave blank to appear to everyone..." maxlength="32">
+          <p class="input-hint">If set, only this player will see your lobby slot.</p>
+        </div>
+        <button id="btn-join-lobby" class="btn-primary">Enter Waiting Lobby</button>
       </div>
-      <button id="btn-join-lobby" class="btn-primary">Enter Waiting Lobby</button>
+
+      <!-- AI tab panel -->
+      <div id="tab-panel-ai" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-ai">
+        <div class="ai-panel">
+          <p class="ai-description">
+            Jump straight into a solo game against a bot.
+          </p>
+          <div class="ai-lands">&#x1F333; &#x1F4A7; &#x1F525; &#x2600;&#xFE0F; &#x1F480;</div>
+        </div>
+        <button id="btn-play-ai" class="btn-primary btn-ai">Play vs Bot</button>
+      </div>
 
       <!-- Rules Accordion -->
       <div class="rules-accordion" id="rules-accordion">

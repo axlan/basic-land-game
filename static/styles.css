@@ -1016,3 +1016,90 @@ input[type="text"]:focus {
   vertical-align: middle;
   letter-spacing: 0.3px;
 }
+/* ==========================================
+   MODE TABS (vs Human / vs AI)
+   ========================================== */
+
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.75rem;
+  padding: 0.35rem;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.mode-tab:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.mode-tab.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(79, 70, 229, 0.2));
+  border-color: rgba(129, 140, 248, 0.45);
+  color: var(--accent-purple);
+  box-shadow: 0 0 12px rgba(129, 140, 248, 0.15);
+}
+
+/* Tab panels */
+.tab-panel {
+  animation: tabFadeIn 0.2s ease both;
+}
+
+.tab-panel.hidden {
+  display: none;
+}
+
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* AI panel content */
+.ai-panel {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(129, 140, 248, 0.18);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.ai-description {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 1rem;
+}
+
+.ai-lands {
+  font-size: 1.75rem;
+  letter-spacing: 0.4rem;
+  filter: drop-shadow(0 0 6px rgba(129, 140, 248, 0.3));
+}
+
+/* AI button variant — green accent */
+.btn-ai {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.3);
+}
+
+.btn-ai:hover {
+  box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45);
+}

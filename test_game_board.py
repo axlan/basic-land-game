@@ -663,8 +663,8 @@ def test_player_hand_private():
         hand = game.player_hand(pid)
         assert len(hand) == len(game.players[pid].hand)
         for card_info in hand:
-            assert "card_id" in card_info
-            assert "land_type" in card_info
+            assert "card_id" in card_info.to_dict()
+            assert "land_type" in card_info.to_dict()
     print("PASS test_player_hand_private")
 
 

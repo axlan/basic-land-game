@@ -10,6 +10,8 @@ POST /lobby/join              Register a player name and enter the lobby.
 GET  /lobby/waiting           List names currently waiting for an opponent.
 POST /lobby/challenge         Challenge a waiting player → creates a game, returns game_id.
 DELETE /lobby/leave           Leave the lobby without starting a game.
+POST /games/vs-ai             Start a solo game against the built-in AI instantly.
+                              Returns game_id + player_token — no lobby step needed.
 
 Game endpoints (all require ?player_token=<token>)
 ---------------------------------------------------
@@ -51,6 +53,8 @@ import asyncio
 import os
 import time
 import uuid
+import logging
+from random import Random
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -66,6 +70,7 @@ from game_board import (
     GameAction,
     GamePhase,
 )
+from game_ai import ai_type1_get_action
 
 # ===========================================================================
 # Timeout constants
@@ -105,6 +110,14 @@ class PlayerRecord:
         self.game_id:          Optional[str] = None   # set when in a game
         self.game_seat:        Optional[int] = None   # 0 or 1
         self.joined_at:        float         = time.monotonic()  # for lobby idle timeout
+        self.is_ai:            bool          = False
+
+
+def _make_ai_player() -> PlayerRecord:
+    """Create a placeholder PlayerRecord representing the AI opponent."""
+    record = PlayerRecord(name="AI Opponent")
+    record.is_ai = True
+    return record
 
 
 class GameRecord:
@@ -119,6 +132,8 @@ class GameRecord:
         self.log_sent: dict[int, int] = {0: 0, 1: 0}
         # Timestamp of when the current turn began, for idle-turn enforcement
         self.turn_started_at: float = time.monotonic()
+        # Is the opponent in this game an AI
+        self.has_ai_opponent = False
 
 
 # Global in-process store
@@ -185,7 +200,7 @@ def _public_state_for(record: GameRecord, seat: int) -> dict:
 
     # Private hand for this seat
     base["my_seat"] = seat
-    base["my_hand"] = game.player_hand(seat)
+    base["my_hand"] = [c.to_dict() for c in game.player_hand(seat)]
 
     # Convenience: whose turn it is from this seat's perspective
     base["whose_turn"]   = _whose_turn_label(record, seat)
@@ -289,7 +304,12 @@ async def _evict_game_players(record: GameRecord, timed_out_seat: int) -> None:
     """
     Force-forfeit the idle player, push the final game_state to both seats,
     then send a session_timeout notification and clean up all state.
+    AI seats are never evicted — only human players can time out.
     """
+    # Never evict the AI seat — it can't actually be idle.
+    if record.players[timed_out_seat].is_ai:
+        return
+
     game_id = record.game_id
 
     # Apply forfeit on behalf of the idle player
@@ -335,6 +355,50 @@ async def _evict_game_players(record: GameRecord, timed_out_seat: int) -> None:
 
 
 # ===========================================================================
+# AI turn helper
+# ===========================================================================
+
+async def _maybe_run_ai_turn(record: GameRecord) -> None:
+    """
+    If the game has an AI player and it is currently the AI's turn, keep
+    applying AI actions until control returns to the human or the game ends.
+    Each accepted action resets the idle-turn clock (same as a human action).
+    """
+    if not record.has_ai_opponent:
+        return
+    game = record.game
+
+    # Determine which seat the AI occupies (always seat 1 for vs-ai games).
+    ai_seat = next(
+        i for i, p in enumerate(record.players) if p.is_ai
+    )
+
+    MAX_AI_STEPS = 20  # safety cap — prevents infinite loops on a bug
+    for _ in range(MAX_AI_STEPS):
+        if game.phase == GamePhase.GAME_OVER:
+            break
+
+        public_state = game.public_state()
+
+        awaited = public_state.get_awaited_player()
+        if awaited != ai_seat:
+            break
+
+        hands = [game.player_hand(0), game.player_hand(1)]
+        action = ai_type1_get_action(public_state, hands)
+        result = game.apply_action(action)
+        if result.success:
+            record.turn_started_at = time.monotonic()
+        else:
+            # AI produced an invalid action — log and bail to avoid a spin-loop
+            logging.getLogger(__name__).error(
+                "AI produced invalid action %s in game %s: %s",
+                action, record.game_id, result.message,
+            )
+            break
+
+
+# ===========================================================================
 # Background timeout reaper
 # ===========================================================================
 
@@ -364,7 +428,10 @@ async def _timeout_reaper() -> None:
             if record.game.phase == GamePhase.GAME_OVER:
                 continue
             if now - record.turn_started_at > TURN_IDLE_SECONDS:
-                idle_seat = record.game.active_player_idx
+                idle_seat = record.game.public_state().get_awaited_player()
+                # Skip AI-controlled seats — they never idle
+                if record.players[idle_seat].is_ai:
+                    continue
                 await _evict_game_players(record, timed_out_seat=idle_seat)
 
 
@@ -402,6 +469,12 @@ class ChallengeResponse(BaseModel):
     your_seat:     int
     opponent_name: str
     message:       str
+
+class VsAiResponse(BaseModel):
+    game_id:      str
+    your_seat:    int
+    player_token: str
+    message:      str
 
 class ActionRequest(BaseModel):
     action_type:            str
@@ -571,6 +644,52 @@ async def leave_lobby(player_token: str = Query(...)):
 
 
 # ===========================================================================
+# VS-AI game — REST
+# ===========================================================================
+
+@app.post("/games/vs-ai", response_model=VsAiResponse, tags=["Game"])
+async def start_vs_ai():
+    """
+    Start a solo game against the built-in AI opponent immediately — no
+    lobby registration or opponent matching required.
+
+    The response contains:
+    - **game_id** — use this for all subsequent game endpoints
+    - **player_token** — treat this like a lobby-issued token; supply it as
+      `?player_token=<token>` on every game request and WebSocket connection
+    - **your_seat** — always `0`; the AI occupies seat `1`
+
+    The AI will automatically take its turns whenever it is the AI's
+    move.  The normal per-turn idle timeout applies to the human player.
+    """
+    human  = PlayerRecord(name="Player")
+    ai     = _make_ai_player()
+
+    _players_by_token[human.token] = human
+
+    game_id = str(uuid.uuid4())
+    record  = GameRecord(game_id=game_id, player0=human, player1=ai)
+    record.has_ai_opponent = True
+    _games[game_id] = record
+
+    human.game_id   = game_id
+    human.game_seat = 0
+    ai.game_id      = game_id
+    ai.game_seat    = 1
+
+    # If the AI moves first (game engine may assign seat 1 as the starting
+    # active player), resolve those turns immediately before returning.
+    await _maybe_run_ai_turn(record)
+
+    return VsAiResponse(
+        game_id=game_id,
+        your_seat=0,
+        player_token=human.token,
+        message="Game started against the AI. You are seat 0.",
+    )
+
+
+# ===========================================================================
 # Game — REST
 # ===========================================================================
 
@@ -634,6 +753,10 @@ async def submit_action(
         for p in record.players:
             p.game_id = None
             p.game_seat = None
+
+    # If this game has an AI, let it respond before pushing state
+    if result.success:
+        await _maybe_run_ai_turn(record)
 
     # Push update to WebSocket clients (non-blocking)
     asyncio.create_task(_push_game_state(record))
@@ -796,6 +919,10 @@ async def game_ws(
                 for p in record.players:
                     p.game_id = None
                     p.game_seat = None
+
+            # If this game has an AI, let it respond before pushing state
+            if result.success:
+                await _maybe_run_ai_turn(record)
 
             # Broadcast updated state to both players
             await _push_game_state(record)
