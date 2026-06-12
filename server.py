@@ -389,6 +389,8 @@ async def _maybe_run_ai_turn(record: GameRecord) -> None:
         result = game.apply_action(action)
         if result.success:
             record.turn_started_at = time.monotonic()
+            # Push update to WebSocket clients (non-blocking)
+            asyncio.create_task(_push_game_state(record))
         else:
             # AI produced an invalid action — log and bail to avoid a spin-loop
             logging.getLogger(__name__).error(
@@ -754,12 +756,12 @@ async def submit_action(
             p.game_id = None
             p.game_seat = None
 
+    # Push update to WebSocket clients (non-blocking)
+    asyncio.create_task(_push_game_state(record))
+
     # If this game has an AI, let it respond before pushing state
     if result.success:
         await _maybe_run_ai_turn(record)
-
-    # Push update to WebSocket clients (non-blocking)
-    asyncio.create_task(_push_game_state(record))
 
     return ActionResponse(
         success=result.success,

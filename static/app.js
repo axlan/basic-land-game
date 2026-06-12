@@ -1015,7 +1015,44 @@ function startGameSession(gId, seat, oppName) {
   initGameWs();
 }
 
+// ==========================================
+// Game-state update queue
+// ==========================================
+// Incoming `game_state` WebSocket messages can arrive in rapid succession
+// (e.g. opponent plays a land that triggers a discard, then the player's
+// subsequent draw arrives as a follow-up broadcast). If each update were
+// applied — and any targeting animation kicked off — immediately, a later
+// update could redraw the board (or start its own animation) while an
+// earlier update's animation was still playing, causing the board to "jump"
+// ahead of the animation. To prevent this, queue incoming states and apply
+// them one at a time, only moving on to the next queued state once the
+// current one's animation (if any) has finished.
+let gameStateQueue = [];
+let isApplyingGameState = false;
+
 function onGameStateUpdate(state) {
+  gameStateQueue.push(state);
+  processGameStateQueue();
+}
+
+function processGameStateQueue() {
+  if (isApplyingGameState) return;
+  if (gameStateQueue.length === 0) return;
+
+  isApplyingGameState = true;
+  const state = gameStateQueue.shift();
+
+  applyGameStateUpdate(state, () => {
+    isApplyingGameState = false;
+    processGameStateQueue();
+  });
+}
+
+// Applies a single game state update: refreshes text/UI elements, appends
+// event log entries, and (if needed) plays a targeting animation before
+// redrawing the board. Calls `onDone` once the board reflects `state`.
+function applyGameStateUpdate(state, onDone) {
+  const previousState = gameState;
   gameState = state;
 
   // Render text updates
@@ -1052,9 +1089,24 @@ function onGameStateUpdate(state) {
   // Update button enabled states
   updateControls();
 
-  // Request Phaser Scene redraw
+  // Request Phaser Scene redraw — animate targeting effects if this update
+  // resolved a Forest/Mountain/Swamp/Plains effect against a specific target.
   if (gameScene) {
-    gameScene.drawBoard();
+    let animSteps = computeTargetingAnimations(previousState, state);
+    if (animSteps.length === 0) {
+      // Opponent (and some auto-resolving) effects may not pass through an
+      // observable RESOLVE_EFFECT/pending_play state — detect them by diffing
+      // newly-played active lands instead.
+      animSteps = computeInstantResolutionAnimations(previousState, state);
+    }
+    if (animSteps.length > 0) {
+      playTargetingAnimations(animSteps, previousState, state, onDone);
+    } else {
+      gameScene.drawBoard();
+      onDone();
+    }
+  } else {
+    onDone();
   }
 }
 
@@ -1340,6 +1392,504 @@ function appendEvents(events) {
   });
 
   list.scrollTop = list.scrollHeight;
+}
+
+// ==========================================
+// Targeting Animations
+// ==========================================
+// Visualizes Forest/Mountain/Swamp/Plains effects by drawing a line from the
+// land that triggered the effect to the card it targeted, then animating that
+// target card moving toward its new zone (graveyard, hand, or battlefield for
+// a Plains replay).
+
+const TARGET_ANIM_COLORS = {
+  forest:   0x34d399, // emerald
+  mountain: 0xf87171, // red
+  swamp:    0xc084fc, // purple
+  plains:   0xfbbf24, // amber
+};
+
+const TARGET_ANIM_LABELS = {
+  forest:   '🌳 Returned to Hand',
+  mountain: '🔥 Destroyed',
+  swamp:    '💀 Discarded',
+  plains:   '☀️ Effect Copied',
+};
+
+// Default landing spot used when a target's new position can't be determined
+// (e.g. a card returned into the opponent's face-down hand).
+const ANIM_OPP_HAND_POS = { x: 490, y: 100 };
+const ANIM_MY_HAND_POS  = { x: 490, y: 600 };
+
+// Returns an id present in `newSet` but not in `oldSet`. Used to detect
+// "a card just appeared in this zone" (e.g. a newly played active land).
+function findAddedToSet(oldSet, newSet) {
+  for (const id of newSet) {
+    if (!oldSet.has(id)) return id;
+  }
+  return null;
+}
+
+// Returns id present in `newToSet` but not `oldToSet`, provided it was
+// previously a member of `fromSet`. Used to detect "card X moved from zone A
+// to zone B" between two consecutive game states.
+function findMovedCardId(fromSet, oldToSet, newToSet) {
+  for (const id of newToSet) {
+    if (!oldToSet.has(id) && fromSet.has(id)) return id;
+  }
+  return null;
+}
+
+// Determine what (if any) targeting animation should play for the transition
+// from `oldState` to `newState`. Returns an array of animation steps (usually
+// 0 or 1; Plains "replay" chains are handled one step per state update).
+function computeTargetingAnimations(oldState, newState) {
+  if (!oldState || !newState) return [];
+  if (oldState.phase !== 'RESOLVE_EFFECT') return [];
+
+  const pending = parsePendingPlay(oldState.pending_play);
+  if (!pending) return [];
+
+  const type = pending.land_type;
+  const seat = oldState.my_seat;
+  const oppSeat = 1 - seat;
+
+  const oldMy  = oldState.players[seat]   || {};
+  const oldOpp = oldState.players[oppSeat] || {};
+  const newMy  = newState.players[seat]   || {};
+  const newOpp = newState.players[oppSeat] || {};
+
+  const idsOf = (list) => new Set((list || []).map(c => c.card_id));
+
+  if (type === 'plains') {
+    // Plains "replays" the effect of one of the player's other active lands.
+    // If the pending land changed to a *different* card while still resolving,
+    // that's the land whose effect is being copied.
+    const newPending = parsePendingPlay(newState.pending_play);
+    if (newState.phase === 'RESOLVE_EFFECT' && newPending && newPending.card_id !== pending.card_id) {
+      return [{ sourceCardId: pending.card_id, targetCardId: newPending.card_id, type: 'plains' }];
+    }
+    return [];
+  }
+
+  if (type === 'mountain') {
+    // Mountain destroys one of the OPPONENT's active lands (relative to whoever
+    // played it). Check both directions since either player could have played it.
+    let id = findMovedCardId(idsOf(oldOpp.active), idsOf(oldOpp.graveyard), idsOf(newOpp.graveyard));
+    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'mountain' }];
+
+    id = findMovedCardId(idsOf(oldMy.active), idsOf(oldMy.graveyard), idsOf(newMy.graveyard));
+    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'mountain' }];
+
+    return [];
+  }
+
+  if (type === 'swamp') {
+    // Swamp discards a card from the OPPONENT's hand (relative to whoever
+    // played it). Check both directions.
+    let id = findMovedCardId(idsOf(oldOpp.revealed_hand), idsOf(oldOpp.graveyard), idsOf(newOpp.graveyard));
+    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'swamp' }];
+
+    id = findMovedCardId(idsOf(oldState.my_hand), idsOf(oldMy.graveyard), idsOf(newMy.graveyard));
+    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'swamp' }];
+
+    return [];
+  }
+
+  if (type === 'forest') {
+    // Forest returns a card from ITS OWNER's graveyard to their hand.
+    // Our own graveyard -> our hand (we played the Forest).
+    let id = findMovedCardId(idsOf(oldMy.graveyard), idsOf(oldState.my_hand), idsOf(newState.my_hand));
+    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'forest' }];
+
+    // Opponent's graveyard shrank (they played the Forest) — the destination
+    // hand slot isn't visible to us, so we animate toward their hand area.
+    const oldOppGYIds = idsOf(oldOpp.graveyard);
+    const newOppGYIds = idsOf(newOpp.graveyard);
+    for (const cid of oldOppGYIds) {
+      if (!newOppGYIds.has(cid)) {
+        return [{ sourceCardId: pending.card_id, targetCardId: cid, type: 'forest', targetHidden: true }];
+      }
+    }
+    return [];
+  }
+
+  return [];
+}
+
+// Fallback detector for effects that resolve without ever appearing as a
+// pending RESOLVE_EFFECT state to us — most commonly the opponent's (or AI's)
+// turn, where play + resolution can land in a single state broadcast.
+//
+// Strategy: find a land that just became newly visible in someone's active
+// zone (i.e. it was just played), then look for a card that moved zones in a
+// way consistent with that land type's effect.
+function computeInstantResolutionAnimations(oldState, newState) {
+  if (!oldState || !newState) return [];
+
+  const seat = oldState.my_seat;
+  const oppSeat = 1 - seat;
+
+  const oldMy  = oldState.players[seat]   || {};
+  const oldOpp = oldState.players[oppSeat] || {};
+  const newMy  = newState.players[seat]   || {};
+  const newOpp = newState.players[oppSeat] || {};
+
+  const idsOf = (list) => new Set((list || []).map(c => c.card_id));
+
+  const candidates = [];
+
+  const newOppActiveId = findAddedToSet(idsOf(oldOpp.active), idsOf(newOpp.active));
+  if (newOppActiveId) candidates.push({ sourceCardId: newOppActiveId, sourceOwner: 'opponent' });
+
+  const newMyActiveId = findAddedToSet(idsOf(oldMy.active), idsOf(newMy.active));
+  if (newMyActiveId) candidates.push({ sourceCardId: newMyActiveId, sourceOwner: 'me' });
+
+  for (const cand of candidates) {
+    const sourceData = findCardDataInState(newState, cand.sourceCardId);
+    if (!sourceData) continue;
+    const type = sourceData.land_type;
+
+    const selfOld  = cand.sourceOwner === 'opponent' ? oldOpp : oldMy;
+    const selfNew  = cand.sourceOwner === 'opponent' ? newOpp : newMy;
+    const otherOld = cand.sourceOwner === 'opponent' ? oldMy  : oldOpp;
+    const otherNew = cand.sourceOwner === 'opponent' ? newMy  : newOpp;
+
+    // The "other" player's hand — always visible if other == me, otherwise
+    // only visible via revealed_hand (rarely populated outside RESOLVE_EFFECT).
+    const otherHandOld = cand.sourceOwner === 'opponent' ? idsOf(oldState.my_hand) : idsOf(oldOpp.revealed_hand);
+    const otherHandNew = cand.sourceOwner === 'opponent' ? idsOf(newState.my_hand) : idsOf(newOpp.revealed_hand);
+
+    if (type === 'mountain') {
+      // Destroys one of the OTHER player's active lands.
+      const id = findMovedCardId(idsOf(otherOld.active), idsOf(otherOld.graveyard), idsOf(otherNew.graveyard));
+      if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'mountain' }];
+    }
+    else if (type === 'swamp') {
+      // Discards a card from the OTHER player's hand.
+      const id = findMovedCardId(otherHandOld, idsOf(otherOld.graveyard), idsOf(otherNew.graveyard));
+      if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'swamp' }];
+    }
+    else if (type === 'forest') {
+      // Returns a card from ITS OWNER's graveyard to their hand.
+      if (cand.sourceOwner === 'me') {
+        const id = findMovedCardId(idsOf(selfOld.graveyard), idsOf(oldState.my_hand), idsOf(newState.my_hand));
+        if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'forest' }];
+      } else {
+        const oldGYIds = idsOf(selfOld.graveyard);
+        const newGYIds = idsOf(selfNew.graveyard);
+        for (const cid of oldGYIds) {
+          if (!newGYIds.has(cid)) {
+            return [{ sourceCardId: cand.sourceCardId, targetCardId: cid, type: 'forest', targetHidden: true }];
+          }
+        }
+      }
+    }
+  }
+
+  return [];
+}
+// (hand, active zones, graveyards, revealed hands, or the pending battleground card).
+function findCardDataInState(state, cardId) {
+  const seat = state.my_seat;
+  const oppSeat = 1 - seat;
+  const lists = [
+    state.my_hand,
+    state.players[seat] && state.players[seat].active,
+    state.players[seat] && state.players[seat].graveyard,
+    state.players[oppSeat] && state.players[oppSeat].active,
+    state.players[oppSeat] && state.players[oppSeat].graveyard,
+    state.players[oppSeat] && state.players[oppSeat].revealed_hand,
+  ];
+  for (const list of lists) {
+    if (!list) continue;
+    const found = list.find(c => c.card_id === cardId);
+    if (found) return found;
+  }
+  const pending = parsePendingPlay(state.pending_play);
+  if (pending && pending.card_id === cardId) {
+    return { card_id: cardId, land_type: pending.land_type };
+  }
+  return null;
+}
+
+// Mirrors drawActiveZone's grouping/stacking math so we can find the on-board
+// (x, y) of any active-zone card without re-rendering anything.
+function computeActiveZonePositions(cards, baseY) {
+  const positions = new Map();
+  if (!cards || cards.length === 0) return positions;
+
+  const groups = {};
+  const ORDER = ['forest', 'island', 'mountain', 'plains', 'swamp'];
+  ORDER.forEach(t => { groups[t] = []; });
+  cards.forEach(c => {
+    if (!groups[c.land_type]) groups[c.land_type] = [];
+    groups[c.land_type].push(c);
+  });
+
+  const types = ORDER.filter(t => groups[t].length > 0);
+  const stackX = getCardXCoordinates(490, 600, types.length, 90);
+
+  types.forEach((type, stackIdx) => {
+    const stack = groups[type];
+    const cx = stackX[stackIdx];
+    const peekStep = 10;
+    const stackTop = baseY - (stack.length - 1) * peekStep / 2;
+
+    stack.forEach((c, cardIdx) => {
+      positions.set(c.card_id, { x: cx, y: stackTop + cardIdx * peekStep });
+    });
+  });
+
+  return positions;
+}
+
+// Computes the on-board (x, y) for every visible card_id in a game state,
+// mirroring drawBoard's layout so animations line up with the rendered cards.
+function computeAllPositions(state) {
+  const positions = new Map();
+  if (!state) return positions;
+
+  const seat = state.my_seat;
+  const oppSeat = 1 - seat;
+  const myData = state.players[seat] || {};
+  const oppData = state.players[oppSeat] || {};
+
+  // Opponent hand (only revealed cards have real card_ids)
+  const revealedOppHand = oppData.revealed_hand || [];
+  const oppHandX = getCardXCoordinates(490, 500, oppData.hand_size || 0, 90);
+  for (let i = 0; i < (oppData.hand_size || 0); i++) {
+    const revCard = revealedOppHand[i];
+    if (revCard) {
+      positions.set(revCard.card_id, { x: oppHandX[i], y: 100 });
+    }
+  }
+
+  // Opponent active zone
+  computeActiveZonePositions(oppData.active, 240).forEach((pos, id) => positions.set(id, pos));
+
+  // Opponent graveyard
+  const oppGY = oppData.graveyard || [];
+  if (oppGY.length > 0) {
+    const maxSpacing = 15;
+    const maxTotalHeight = 120;
+    const spacing = oppGY.length > 1 ? Math.min(maxSpacing, maxTotalHeight / (oppGY.length - 1)) : 0;
+    oppGY.forEach((c, idx) => positions.set(c.card_id, { x: 880, y: 130 + idx * spacing }));
+  }
+
+  // Player active zone
+  computeActiveZonePositions(myData.active, 460).forEach((pos, id) => positions.set(id, pos));
+
+  // Player hand
+  const myHand = state.my_hand || [];
+  const myHandX = getCardXCoordinates(490, 650, myHand.length, 90);
+  myHand.forEach((c, idx) => positions.set(c.card_id, { x: myHandX[idx], y: 600 }));
+
+  // Player graveyard (spread out when Forest is currently choosing a target)
+  const isForestTargeting = state.phase === 'RESOLVE_EFFECT' &&
+    parsePendingPlay(state.pending_play)?.land_type === 'forest';
+  const myGYSpacing = isForestTargeting ? 65 : 15;
+  const myGY = myData.graveyard || [];
+  if (myGY.length > 0) {
+    const maxTotalHeight = isForestTargeting ? myGY.length * myGYSpacing : 120;
+    const spacing = myGY.length > 1 ? Math.min(myGYSpacing, maxTotalHeight / (myGY.length - 1)) : 0;
+    myGY.forEach((c, idx) => positions.set(c.card_id, { x: 880, y: 570 - idx * spacing }));
+  }
+
+  // Battleground / pending play
+  const pending = parsePendingPlay(state.pending_play);
+  if (pending) {
+    positions.set(pending.card_id, { x: 490, y: 350 });
+  }
+
+  return positions;
+}
+
+// Draws an arrowed line + label from `from` to `to`, pulses a ring around the
+// target, then fades everything out and calls `onDone`.
+function animateTargetLine(from, to, type, onDone) {
+  const scene = gameScene;
+  const color = TARGET_ANIM_COLORS[type] || 0xfbbf24;
+
+  const g = scene.add.graphics();
+  g.setDepth(5000);
+
+  const drawLine = (alpha) => {
+    g.clear();
+    if (alpha <= 0) return;
+    g.lineStyle(3, color, alpha);
+    g.lineBetween(from.x, from.y, to.x, to.y);
+
+    const angle = Math.atan2(to.y - from.y, to.x - from.x);
+    const headLen = 14;
+    g.fillStyle(color, alpha);
+    g.beginPath();
+    g.moveTo(to.x, to.y);
+    g.lineTo(to.x - headLen * Math.cos(angle - Math.PI / 6), to.y - headLen * Math.sin(angle - Math.PI / 6));
+    g.lineTo(to.x - headLen * Math.cos(angle + Math.PI / 6), to.y - headLen * Math.sin(angle + Math.PI / 6));
+    g.closePath();
+    g.fillPath();
+  };
+  drawLine(0);
+
+  const midX = (from.x + to.x) / 2;
+  const midY = (from.y + to.y) / 2;
+  const label = scene.add.text(midX, midY, TARGET_ANIM_LABELS[type] || '', {
+    fontSize: '14px',
+    fontFamily: 'Outfit, sans-serif',
+    fontWeight: '700',
+    fill: '#ffffff',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    padding: { x: 8, y: 4 }
+  }).setOrigin(0.5).setDepth(5001).setAlpha(0);
+
+  const ring = scene.add.graphics();
+  ring.setDepth(5000);
+  ring.lineStyle(4, color, 0.9);
+  ring.strokeCircle(to.x, to.y, 70);
+  ring.setAlpha(0);
+
+  const lineAlpha = { v: 0 };
+  scene.tweens.add({
+    targets: lineAlpha,
+    v: 1,
+    duration: 220,
+    onUpdate: () => drawLine(lineAlpha.v),
+    onComplete: () => {
+      label.setAlpha(1);
+      ring.setAlpha(0.9);
+
+      scene.tweens.add({
+        targets: ring,
+        alpha: 0.15,
+        scaleX: 1.15,
+        scaleY: 1.15,
+        duration: 350,
+        yoyo: true,
+        repeat: 1
+      });
+
+      scene.time.delayedCall(550, () => {
+        scene.tweens.add({
+          targets: [label, ring],
+          alpha: 0,
+          duration: 200,
+          onComplete: () => {
+            label.destroy();
+            ring.destroy();
+          }
+        });
+        scene.tweens.add({
+          targets: lineAlpha,
+          v: 0,
+          duration: 200,
+          onUpdate: () => drawLine(lineAlpha.v),
+          onComplete: () => {
+            g.destroy();
+            onDone();
+          }
+        });
+      });
+    }
+  });
+}
+
+// Spawns a temporary "ghost" copy of the target card at `fromPos`, pulses it,
+// then flies/fades it toward `toPos` before destroying it and calling `onDone`.
+function animateCardMove(cardId, fromPos, toPos, oldState, onDone) {
+  const scene = gameScene;
+  const cardData = findCardDataInState(oldState, cardId);
+
+  if (!cardData || !fromPos) {
+    onDone();
+    return;
+  }
+
+  const ghost = new CardUI(scene, fromPos.x, fromPos.y, cardData.land_type, cardId + '_anim_ghost', true, false, false);
+  ghost.setDepth(6000);
+  ghost.disableInteractive();
+
+  const destination = toPos || fromPos;
+
+  scene.tweens.add({
+    targets: ghost,
+    scale: 1.15,
+    duration: 180,
+    yoyo: true,
+    onComplete: () => {
+      scene.tweens.add({
+        targets: ghost,
+        x: destination.x,
+        y: destination.y,
+        scale: 0.85,
+        alpha: 0.25,
+        duration: 450,
+        ease: 'Cubic.easeInOut',
+        onComplete: () => {
+          ghost.destroy();
+          onDone();
+        }
+      });
+    }
+  });
+}
+
+// Runs a sequence of targeting animation steps over the board as it appeared
+// in `oldState`, then redraws the board to reflect `newState`. Calls
+// `onComplete` once the board has been redrawn to reflect `newState`.
+function playTargetingAnimations(steps, oldState, newState, onComplete) {
+  if (!gameScene) {
+    if (onComplete) onComplete();
+    return;
+  }
+
+  const oldPositions = computeAllPositions(oldState);
+  const newPositions = computeAllPositions(newState);
+
+  // Render the board exactly as it looked before this update, so the
+  // animation has a stable starting point, then restore the new state.
+  const liveState = gameState;
+  gameState = oldState;
+  gameScene.drawBoard();
+  gameState = liveState;
+
+  const runStep = (i) => {
+    if (i >= steps.length) {
+      gameScene.drawBoard();
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const step = steps[i];
+    const fromPos = oldPositions.get(step.sourceCardId) || newPositions.get(step.sourceCardId);
+    const targetOldPos = oldPositions.get(step.targetCardId);
+
+    if (!fromPos || !targetOldPos) {
+      runStep(i + 1);
+      return;
+    }
+
+    let targetNewPos = newPositions.get(step.targetCardId);
+    if (!targetNewPos) {
+      // Fallback landing spots for targets whose destination isn't directly
+      // visible (e.g. a card returned to the opponent's face-down hand).
+      if (step.type === 'forest' && step.targetHidden) {
+        targetNewPos = ANIM_OPP_HAND_POS;
+      } else if (step.type === 'forest') {
+        targetNewPos = ANIM_MY_HAND_POS;
+      } else {
+        targetNewPos = targetOldPos;
+      }
+    }
+
+    animateTargetLine(fromPos, targetOldPos, step.type, () => {
+      animateCardMove(step.targetCardId, targetOldPos, targetNewPos, oldState, () => {
+        runStep(i + 1);
+      });
+    });
+  };
+
+  runStep(0);
 }
 
 // ==========================================
@@ -1778,7 +2328,7 @@ let toastTimeout = null;
 function showToast(msg, type = 'success') {
   const toast = document.getElementById('toast-element');
   if (!toast) return;
-  
+
   if (type === 'success') {
     toast.classList.add('toast-success');
     // For now only show error toasts.
