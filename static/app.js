@@ -1514,6 +1514,17 @@ function handleResize() {
   }
 }
 
+// Watch the actual canvas container
+const gameContainer = document.getElementById('game-canvas-container');
+
+if (gameContainer) {
+    const resizeObserver = new ResizeObserver(() => {
+        handleResize();
+    });
+
+    resizeObserver.observe(gameContainer);
+}
+
 // ==========================================
 // UI Event Bindings
 // ==========================================
@@ -1604,6 +1615,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.addEventListener('resize', handleResize);
   window.addEventListener('orientationchange', handleResize);
+
+  const container = document.getElementById('game-canvas-container');
+
+  const resizeObserver = new ResizeObserver(() => {
+    if (!phaserGame) return;
+
+    phaserGame.scale.refresh();
+
+    if (gameScene?.drawBoard) {
+      gameScene.drawBoard();
+    }
+  });
+
+  resizeObserver.observe(container);
 
   // Reconnection Check on page load
   checkSessionReconstruction();
@@ -1753,15 +1778,17 @@ let toastTimeout = null;
 function showToast(msg, type = 'success') {
   const toast = document.getElementById('toast-element');
   if (!toast) return;
-
-  toast.textContent = msg;
-  toast.className = 'toast-msg show';
   
   if (type === 'success') {
     toast.classList.add('toast-success');
+    // For now only show error toasts.
+    return;
   } else if (type === 'error') {
     toast.classList.add('toast-error');
   }
+
+  toast.textContent = msg;
+  toast.className = 'toast-msg show';  
 
   if (toastTimeout) {
     clearTimeout(toastTimeout);
