@@ -410,6 +410,12 @@ class BasicLandGameScene extends Phaser.Scene {
   }
 
   drawBoard() {
+    // Redrawing destroys every CardUI (including any the mouse is currently
+    // hovering), which can leave Phaser's input plugin without a chance to
+    // fire `pointerout` on the destroyed card. Explicitly hide the tooltip
+    // here so it doesn't get stuck open across a redraw.
+    _tooltip.hide();
+
     this.cardsGroup.clear(true, true);
     if (!gameState) return;
 
@@ -987,6 +993,9 @@ function startGameSession(gId, seat, oppName) {
   gameId = gId;
   localStorage.setItem('basic_land_game_id', gameId);
 
+  // Reset event-driven animation tracking for the new game.
+  resetAnimationEventTracking();
+
   // Close Lobby WS since we are entering game
   if (lobbyWs) {
     lobbyWs.close();
@@ -1089,16 +1098,11 @@ function applyGameStateUpdate(state, onDone) {
   // Update button enabled states
   updateControls();
 
-  // Request Phaser Scene redraw — animate targeting effects if this update
-  // resolved a Forest/Mountain/Swamp/Plains effect against a specific target.
+  // Request Phaser Scene redraw — animate targeting effects if the events
+  // reported with this update indicate a Forest/Mountain/Swamp/Plains effect
+  // resolved against a specific target.
   if (gameScene) {
-    let animSteps = computeTargetingAnimations(previousState, state);
-    if (animSteps.length === 0) {
-      // Opponent (and some auto-resolving) effects may not pass through an
-      // observable RESOLVE_EFFECT/pending_play state — detect them by diffing
-      // newly-played active lands instead.
-      animSteps = computeInstantResolutionAnimations(previousState, state);
-    }
+    const animSteps = computeAnimationStepsFromEvents(state.new_events, previousState, state);
     if (animSteps.length > 0) {
       playTargetingAnimations(animSteps, previousState, state, onDone);
     } else {
@@ -1421,174 +1425,209 @@ const TARGET_ANIM_LABELS = {
 const ANIM_OPP_HAND_POS = { x: 490, y: 100 };
 const ANIM_MY_HAND_POS  = { x: 490, y: 600 };
 
-// Returns an id present in `newSet` but not in `oldSet`. Used to detect
-// "a card just appeared in this zone" (e.g. a newly played active land).
-function findAddedToSet(oldSet, newSet) {
-  for (const id of newSet) {
-    if (!oldSet.has(id)) return id;
+// While a land's effect is resolving, drawBoard() renders that card in the
+// center "battleground" slot (see the pending-play block of drawBoard).
+// Targeting-animation lines should originate from that slot, not from the
+// card's eventual resting place in an active zone.
+const ANIM_BATTLEGROUND_POS = { x: 490, y: 350 };
+
+// ------------------------------------------------------------------------
+// Event-log based animation detection
+// ------------------------------------------------------------------------
+// Rather than diffing two game states to guess what just happened, we parse
+// the human-readable event strings the server reports in `new_events`. These
+// strings carry the player index, land type, and (for targeted effects) an
+// 8-character prefix of the affected card's id — everything needed to figure
+// out which animation to play and which cards are involved.
+
+// Regexes for the event strings that can drive a targeting animation.
+const RE_ANNOUNCE_PLAY    = /^\[T[0-9]+\] Player (\d+) announces play of (\w+) \(id=([0-9a-fA-F]{8})/;
+const RE_PLAINS_COPY      = /^\[T[0-9]+\] Plains effect: Player (\d+) copies (\w+) effect\.?$/;
+const RE_MOUNTAIN_DESTROY = /^\[T[0-9]+\] Mountain effect: Player (\d+) destroys opponent's (\w+) \(id=([0-9a-fA-F]{8})/;
+const RE_FOREST_RETURN    = /^\[T[0-9]+\] Forest effect: Player (\d+) returns (\w+) \(id=([0-9a-fA-F]{8})/;
+const RE_SWAMP_DISCARD    = /^\[T[0-9]+\] Swamp effect: Player (\d+) discards opponent's (\w+) \(id=([0-9a-fA-F]{8})/;
+
+// Tracks the most recently *announced* play for each player (seat index ->
+// { type, prefix }), so that when an effect resolves we know which of that
+// player's lands triggered it. Also tracks, per player, a Plains "copy" that
+// is currently in flight (seat index -> { cardId, type } | null) so the
+// following effect-resolution message can be attributed to the *copied* land
+// rather than the player's own land of that type.
+let lastPlayedCard = { 0: null, 1: null };
+let pendingCopiedSource = { 0: null, 1: null };
+
+// Resets per-game animation tracking state. Called whenever a new game
+// session starts so stale data from a previous game can't leak in.
+function resetAnimationEventTracking() {
+  lastPlayedCard = { 0: null, 1: null };
+  pendingCopiedSource = { 0: null, 1: null };
+}
+
+// Searches every zone of `state` (hand, active, graveyard, revealed hand,
+// and the pending battleground card, for both players) for a card whose id
+// starts with `idPrefix`, optionally constrained to `landTypeHint`.
+function findCardByIdPrefix(state, idPrefix, landTypeHint) {
+  if (!state || !idPrefix) return null;
+  const seat = state.my_seat;
+  const oppSeat = 1 - seat;
+  const lists = [
+    state.my_hand,
+    state.players[seat] && state.players[seat].active,
+    state.players[seat] && state.players[seat].graveyard,
+    state.players[seat] && state.players[seat].revealed_hand,
+    state.players[oppSeat] && state.players[oppSeat].active,
+    state.players[oppSeat] && state.players[oppSeat].graveyard,
+    state.players[oppSeat] && state.players[oppSeat].revealed_hand,
+  ];
+  for (const list of lists) {
+    if (!list) continue;
+    const found = list.find(c => c.card_id && c.card_id.startsWith(idPrefix) &&
+      (!landTypeHint || c.land_type === landTypeHint));
+    if (found) return found;
+  }
+  const pending = parsePendingPlay(state.pending_play);
+  if (pending && pending.card_id && pending.card_id.startsWith(idPrefix) &&
+      (!landTypeHint || pending.land_type === landTypeHint)) {
+    return { card_id: pending.card_id, land_type: pending.land_type };
   }
   return null;
 }
 
-// Returns id present in `newToSet` but not `oldToSet`, provided it was
-// previously a member of `fromSet`. Used to detect "card X moved from zone A
-// to zone B" between two consecutive game states.
-function findMovedCardId(fromSet, oldToSet, newToSet) {
-  for (const id of newToSet) {
-    if (!oldToSet.has(id) && fromSet.has(id)) return id;
+// Resolves an 8-character id prefix (plus optional land type hint) to a full
+// card id by searching the given states in order, returning the first match.
+function findFullCardId(idPrefix, landTypeHint, ...states) {
+  for (const state of states) {
+    const found = findCardByIdPrefix(state, idPrefix, landTypeHint);
+    if (found) return found.card_id;
   }
   return null;
 }
 
-// Determine what (if any) targeting animation should play for the transition
-// from `oldState` to `newState`. Returns an array of animation steps (usually
-// 0 or 1; Plains "replay" chains are handled one step per state update).
-function computeTargetingAnimations(oldState, newState) {
-  if (!oldState || !newState) return [];
-  if (oldState.phase !== 'RESOLVE_EFFECT') return [];
-
-  const pending = parsePendingPlay(oldState.pending_play);
-  if (!pending) return [];
-
-  const type = pending.land_type;
-  const seat = oldState.my_seat;
-  const oppSeat = 1 - seat;
-
-  const oldMy  = oldState.players[seat]   || {};
-  const oldOpp = oldState.players[oppSeat] || {};
-  const newMy  = newState.players[seat]   || {};
-  const newOpp = newState.players[oppSeat] || {};
-
-  const idsOf = (list) => new Set((list || []).map(c => c.card_id));
-
-  if (type === 'plains') {
-    // Plains "replays" the effect of one of the player's other active lands.
-    // If the pending land changed to a *different* card while still resolving,
-    // that's the land whose effect is being copied.
-    const newPending = parsePendingPlay(newState.pending_play);
-    if (newState.phase === 'RESOLVE_EFFECT' && newPending && newPending.card_id !== pending.card_id) {
-      return [{ sourceCardId: pending.card_id, targetCardId: newPending.card_id, type: 'plains' }];
-    }
-    return [];
+// Finds the active-zone card belonging to `playerIdx` of type `landType`,
+// searching the given states in order. Used as a fallback when there's no
+// tracked "announced play" for that player/type.
+function findActiveCardOfType(playerIdx, landType, ...states) {
+  for (const state of states) {
+    if (!state) continue;
+    const seat = state.my_seat;
+    const active = playerIdx === seat
+      ? (state.players[seat] && state.players[seat].active)
+      : (state.players[1 - seat] && state.players[1 - seat].active);
+    const found = (active || []).find(c => c.land_type === landType);
+    if (found) return found.card_id;
   }
-
-  if (type === 'mountain') {
-    // Mountain destroys one of the OPPONENT's active lands (relative to whoever
-    // played it). Check both directions since either player could have played it.
-    let id = findMovedCardId(idsOf(oldOpp.active), idsOf(oldOpp.graveyard), idsOf(newOpp.graveyard));
-    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'mountain' }];
-
-    id = findMovedCardId(idsOf(oldMy.active), idsOf(oldMy.graveyard), idsOf(newMy.graveyard));
-    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'mountain' }];
-
-    return [];
-  }
-
-  if (type === 'swamp') {
-    // Swamp discards a card from the OPPONENT's hand (relative to whoever
-    // played it). Check both directions.
-    let id = findMovedCardId(idsOf(oldOpp.revealed_hand), idsOf(oldOpp.graveyard), idsOf(newOpp.graveyard));
-    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'swamp' }];
-
-    id = findMovedCardId(idsOf(oldState.my_hand), idsOf(oldMy.graveyard), idsOf(newMy.graveyard));
-    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'swamp' }];
-
-    return [];
-  }
-
-  if (type === 'forest') {
-    // Forest returns a card from ITS OWNER's graveyard to their hand.
-    // Our own graveyard -> our hand (we played the Forest).
-    let id = findMovedCardId(idsOf(oldMy.graveyard), idsOf(oldState.my_hand), idsOf(newState.my_hand));
-    if (id) return [{ sourceCardId: pending.card_id, targetCardId: id, type: 'forest' }];
-
-    // Opponent's graveyard shrank (they played the Forest) — the destination
-    // hand slot isn't visible to us, so we animate toward their hand area.
-    const oldOppGYIds = idsOf(oldOpp.graveyard);
-    const newOppGYIds = idsOf(newOpp.graveyard);
-    for (const cid of oldOppGYIds) {
-      if (!newOppGYIds.has(cid)) {
-        return [{ sourceCardId: pending.card_id, targetCardId: cid, type: 'forest', targetHidden: true }];
-      }
-    }
-    return [];
-  }
-
-  return [];
+  return null;
 }
 
-// Fallback detector for effects that resolve without ever appearing as a
-// pending RESOLVE_EFFECT state to us — most commonly the opponent's (or AI's)
-// turn, where play + resolution can land in a single state broadcast.
-//
-// Strategy: find a land that just became newly visible in someone's active
-// zone (i.e. it was just played), then look for a card that moved zones in a
-// way consistent with that land type's effect.
-function computeInstantResolutionAnimations(oldState, newState) {
+// Finds the card id of the land belonging to `playerIdx` that most recently
+// "announced" a play of type `landType`, falling back to any active land of
+// that type belonging to the player.
+function findSourceCardId(playerIdx, landType, oldState, newState) {
+  const tracked = lastPlayedCard[playerIdx];
+  if (tracked && tracked.type === landType) {
+    const id = findFullCardId(tracked.prefix, landType, oldState, newState);
+    if (id) return id;
+  }
+  return findActiveCardOfType(playerIdx, landType, oldState, newState);
+}
+
+// Determines the source card for a resolving Mountain/Forest/Swamp effect
+// owned by `playerIdx`. If a Plains "copy" is currently in flight for this
+// player and copies a land of `effectType`, that copied land is the true
+// source (and the in-flight copy is consumed); otherwise the source is the
+// player's own land of `effectType`.
+function resolveEffectSourceCardId(playerIdx, effectType, oldState, newState) {
+  const copied = pendingCopiedSource[playerIdx];
+  if (copied && copied.type === effectType) {
+    pendingCopiedSource[playerIdx] = null;
+    return copied.cardId;
+  }
+  return findSourceCardId(playerIdx, effectType, oldState, newState);
+}
+
+// Parses `events` (the `new_events` reported alongside a state update) into
+// a sequence of targeting animation steps. `oldState`/`newState` are used
+// only to resolve id-prefixes to full card ids and to look up on-board
+// positions — all information about *what happened* comes from the event
+// strings themselves.
+function computeAnimationStepsFromEvents(events, oldState, newState) {
+  if (!events || events.length === 0) return [];
   if (!oldState || !newState) return [];
+  console.info("computeAnimationStepsFromEvents")
 
-  const seat = oldState.my_seat;
-  const oppSeat = 1 - seat;
+  const steps = [];
 
-  const oldMy  = oldState.players[seat]   || {};
-  const oldOpp = oldState.players[oppSeat] || {};
-  const newMy  = newState.players[seat]   || {};
-  const newOpp = newState.players[oppSeat] || {};
+  for (const evt of events) {
+    let m;
+    console.info(  "  " + evt)
 
-  const idsOf = (list) => new Set((list || []).map(c => c.card_id));
-
-  const candidates = [];
-
-  const newOppActiveId = findAddedToSet(idsOf(oldOpp.active), idsOf(newOpp.active));
-  if (newOppActiveId) candidates.push({ sourceCardId: newOppActiveId, sourceOwner: 'opponent' });
-
-  const newMyActiveId = findAddedToSet(idsOf(oldMy.active), idsOf(newMy.active));
-  if (newMyActiveId) candidates.push({ sourceCardId: newMyActiveId, sourceOwner: 'me' });
-
-  for (const cand of candidates) {
-    const sourceData = findCardDataInState(newState, cand.sourceCardId);
-    if (!sourceData) continue;
-    const type = sourceData.land_type;
-
-    const selfOld  = cand.sourceOwner === 'opponent' ? oldOpp : oldMy;
-    const selfNew  = cand.sourceOwner === 'opponent' ? newOpp : newMy;
-    const otherOld = cand.sourceOwner === 'opponent' ? oldMy  : oldOpp;
-    const otherNew = cand.sourceOwner === 'opponent' ? newMy  : newOpp;
-
-    // The "other" player's hand — always visible if other == me, otherwise
-    // only visible via revealed_hand (rarely populated outside RESOLVE_EFFECT).
-    const otherHandOld = cand.sourceOwner === 'opponent' ? idsOf(oldState.my_hand) : idsOf(oldOpp.revealed_hand);
-    const otherHandNew = cand.sourceOwner === 'opponent' ? idsOf(newState.my_hand) : idsOf(newOpp.revealed_hand);
-
-    if (type === 'mountain') {
-      // Destroys one of the OTHER player's active lands.
-      const id = findMovedCardId(idsOf(otherOld.active), idsOf(otherOld.graveyard), idsOf(otherNew.graveyard));
-      if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'mountain' }];
+    if ((m = evt.match(RE_ANNOUNCE_PLAY))) {
+      console.info(  "  RE_ANNOUNCE_PLAY")
+      const playerIdx = Number(m[1]);
+      lastPlayedCard[playerIdx] = { type: m[2], prefix: m[3] };
+      continue;
     }
-    else if (type === 'swamp') {
-      // Discards a card from the OTHER player's hand.
-      const id = findMovedCardId(otherHandOld, idsOf(otherOld.graveyard), idsOf(otherNew.graveyard));
-      if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'swamp' }];
-    }
-    else if (type === 'forest') {
-      // Returns a card from ITS OWNER's graveyard to their hand.
-      if (cand.sourceOwner === 'me') {
-        const id = findMovedCardId(idsOf(selfOld.graveyard), idsOf(oldState.my_hand), idsOf(newState.my_hand));
-        if (id) return [{ sourceCardId: cand.sourceCardId, targetCardId: id, type: 'forest' }];
-      } else {
-        const oldGYIds = idsOf(selfOld.graveyard);
-        const newGYIds = idsOf(selfNew.graveyard);
-        for (const cid of oldGYIds) {
-          if (!newGYIds.has(cid)) {
-            return [{ sourceCardId: cand.sourceCardId, targetCardId: cid, type: 'forest', targetHidden: true }];
-          }
-        }
+
+    if ((m = evt.match(RE_PLAINS_COPY))) {
+      const playerIdx = Number(m[1]);
+      const copiedType = m[2];
+      const copiedCardId = findActiveCardOfType(playerIdx, copiedType, oldState, newState);
+      const plainsCardId = findSourceCardId(playerIdx, 'plains', oldState, newState);
+
+      if (copiedCardId && plainsCardId) {
+        steps.push({ sourceCardId: plainsCardId, targetCardId: copiedCardId, type: 'plains' });
       }
+
+      // Remember the copied land so the next effect-resolution message for
+      // this player (of the matching type) is attributed to it.
+      pendingCopiedSource[playerIdx] = copiedCardId ? { cardId: copiedCardId, type: copiedType } : null;
+      continue;
+    }
+
+    if ((m = evt.match(RE_MOUNTAIN_DESTROY))) {
+      const playerIdx = Number(m[1]);
+      const targetType = m[2];
+      const targetCardId = findFullCardId(m[3], targetType, oldState, newState);
+      const sourceCardId = resolveEffectSourceCardId(playerIdx, 'mountain', oldState, newState);
+
+      if (targetCardId && sourceCardId) {
+        steps.push({ sourceCardId, targetCardId, type: 'mountain' });
+      }
+      continue;
+    }
+
+    if ((m = evt.match(RE_FOREST_RETURN))) {
+      const playerIdx = Number(m[1]);
+      const targetType = m[2];
+      const targetCardId = findFullCardId(m[3], targetType, oldState, newState);
+      const sourceCardId = resolveEffectSourceCardId(playerIdx, 'forest', oldState, newState);
+
+      if (targetCardId && sourceCardId) {
+        // If the opponent played the Forest, the returned card lands in
+        // their face-down hand, whose real position isn't visible to us.
+        const targetHidden = playerIdx !== newState.my_seat;
+        steps.push({ sourceCardId, targetCardId, type: 'forest', targetHidden });
+      }
+      continue;
+    }
+
+    if ((m = evt.match(RE_SWAMP_DISCARD))) {
+      const playerIdx = Number(m[1]);
+      const targetType = m[2];
+      const targetCardId = findFullCardId(m[3], targetType, oldState, newState);
+      const sourceCardId = resolveEffectSourceCardId(playerIdx, 'swamp', oldState, newState);
+
+      if (targetCardId && sourceCardId) {
+        steps.push({ sourceCardId, targetCardId, type: 'swamp' });
+      }
+      continue;
     }
   }
 
-  return [];
+  return steps;
 }
+
+// Returns the data (land_type, card_id) for `cardId` by searching every zone
 // (hand, active zones, graveyards, revealed hands, or the pending battleground card).
 function findCardDataInState(state, cardId) {
   const seat = state.my_seat;
@@ -1861,10 +1900,10 @@ function playTargetingAnimations(steps, oldState, newState, onComplete) {
     }
 
     const step = steps[i];
-    const fromPos = oldPositions.get(step.sourceCardId) || newPositions.get(step.sourceCardId);
+    const fromPos = ANIM_BATTLEGROUND_POS;
     const targetOldPos = oldPositions.get(step.targetCardId);
 
-    if (!fromPos || !targetOldPos) {
+    if (!targetOldPos) {
       runStep(i + 1);
       return;
     }
@@ -2252,6 +2291,9 @@ async function checkSessionReconstruction() {
 
       document.getElementById('opponent-name-indicator').textContent = oppName;
       document.getElementById('seat-indicator').textContent = seat;
+
+      // Reset event-driven animation tracking for the restored session.
+      resetAnimationEventTracking();
 
       if (!phaserGame) {
         initPhaserGame();

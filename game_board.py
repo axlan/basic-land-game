@@ -563,7 +563,7 @@ class BasicLandGame:
             if drawn:
                 self._log(
                     f"Island effect: Player {player_idx} draws "
-                    f"{drawn.land_type.value} (id={drawn.card_id[:8]})."
+                    f"{drawn.card_id[:8]}."
                 )
             else:
                 self._log(f"Island effect: Player {player_idx}'s library is empty.")
@@ -766,7 +766,7 @@ class BasicLandGame:
             if drawn:
                 self._log(
                     f"Copied Island effect: Player {player_idx} draws "
-                    f"{drawn.land_type.value} (id={drawn.card_id[:8]})."
+                    f"{drawn.card_id[:8]}."
                 )
             else:
                 self._log(f"Copied Island: library is empty.")
@@ -850,7 +850,7 @@ class BasicLandGame:
         if drawn:
             self._log(
                 f"Player {self.active_player_idx} draws "
-                f"{drawn.land_type.value} (id={drawn.card_id[:8]})."
+                f"{drawn.card_id[:8]}."
             )
         else:
             self._log(

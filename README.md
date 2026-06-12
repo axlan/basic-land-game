@@ -242,6 +242,3 @@ The start screen has a **vs Human / vs Bot tab switcher**. The vs Bot tab calls 
  - Add eye icon to indicate cards in hand that were revealed
  - Add customizable card art
  - Fix toasts to be more useful especially to explain AI turns
- - Fix event log including opponent card draw
- - Base animations on event log
- - Fix tooltips sometimes sticking around.
