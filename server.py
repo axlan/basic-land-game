@@ -636,11 +636,33 @@ async def challenge_opponent(body: ChallengeRequest, player_token: str = Query(.
 
 @app.delete("/lobby/leave", tags=["Lobby"])
 async def leave_lobby(player_token: str = Query(...)):
-    """Remove yourself from the waiting lobby."""
+    """
+    Leave the lobby and end this player's session.
+
+    This is intentionally idempotent and always succeeds for any
+    currently-valid token, regardless of whether the player is still
+    present in the waiting list (e.g. they may have just been challenged
+    and removed from the lobby in a race with this request). After this
+    call the token is fully invalidated, so the client should discard it —
+    otherwise a page refresh would re-validate the stale token and bounce
+    the player back into the lobby UI.
+    """
     player = _require_player(player_token)
-    removed = _waiting_players.pop(player.player_id, None)
-    if removed is None:
-        raise HTTPException(status_code=400, detail="You are not in the lobby.")
+
+    # Remove from the waiting list, if present.
+    _waiting_players.pop(player.player_id, None)
+
+    # Fully invalidate the session so it can't be reconstructed on refresh.
+    _players_by_token.pop(player.token, None)
+
+    # Close any open lobby WebSocket connections for this player.
+    for ws in list(_lobby_connections.get(player.player_id, [])):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+    _lobby_connections.pop(player.player_id, None)
+
     await _push_lobby_update()
     return {"message": "Left the lobby."}
 
