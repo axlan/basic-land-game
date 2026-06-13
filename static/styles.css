@@ -261,6 +261,23 @@ input[type="text"]:focus {
 #game-sidebar {
   flex: 0 0 clamp(200px, 28vw, 280px);
   width: clamp(200px, 28vw, 280px);
+
+  /* Constrain to the height given by the flex row and scroll internally
+     instead of letting the page grow taller than the viewport. */
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#game-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+#game-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
 }
 
 @media (max-height: 500px) {
