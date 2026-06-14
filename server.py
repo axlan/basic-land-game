@@ -206,6 +206,10 @@ def _public_state_for(record: GameRecord, seat: int) -> dict:
     base["whose_turn"]   = _whose_turn_label(record, seat)
     base["winner_name"]  = _winner_name(record)
 
+    # So the client can tell vs-AI games apart from vs-human games after a
+    # page reload (the in-memory `isAiGame` flag does not survive reloads).
+    base["has_ai_opponent"] = record.has_ai_opponent
+
     # Incremental event log
     base["new_events"]  = game.event_log[record.log_sent[seat]:]
     record.log_sent[seat] = len(game.event_log)

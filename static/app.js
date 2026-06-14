@@ -606,6 +606,9 @@ class BasicLandGameScene extends Phaser.Scene {
             label = 'Pick Additional Card to Discard';
           } else {
             label = 'Counter? Pick an Island or Pass';
+            if (gameState.phase === 'AWAIT_COUNTER_COUNTER') {
+              label = 'Counter ' + label;
+            }
           }
         }
         else {
@@ -1553,16 +1556,13 @@ function resolveEffectSourceCardId(playerIdx, effectType, oldState, newState) {
 function computeAnimationStepsFromEvents(events, oldState, newState) {
   if (!events || events.length === 0) return [];
   if (!oldState || !newState) return [];
-  console.info("computeAnimationStepsFromEvents")
 
   const steps = [];
 
   for (const evt of events) {
     let m;
-    console.info(  "  " + evt)
 
     if ((m = evt.match(RE_ANNOUNCE_PLAY))) {
-      console.info(  "  RE_ANNOUNCE_PLAY")
       const playerIdx = Number(m[1]);
       lastPlayedCard[playerIdx] = { type: m[2], prefix: m[3] };
       continue;
@@ -2288,6 +2288,16 @@ async function checkSessionReconstruction() {
       const seat = state.my_seat;
       const oppSeat = 1 - seat;
       const oppName = state.players[oppSeat].name || 'Opponent';
+
+      // Restore our own display name too — this may have been lost on reload
+      // (e.g. AI games intentionally clear 'basic_land_player_name' from
+      // localStorage), but it's still needed for end-of-game win/loss checks.
+      playerName = state.players[seat].name || playerName;
+
+      // Restore whether this is a vs-AI game — needed so returnToLobby()
+      // sends us back to the start screen (not the multiplayer lobby) when
+      // the game ends after a reload.
+      isAiGame = !!state.has_ai_opponent;
 
       document.getElementById('opponent-name-indicator').textContent = oppName;
       document.getElementById('seat-indicator').textContent = seat;
