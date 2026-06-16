@@ -782,6 +782,12 @@ async def submit_action(
             p.game_id = None
             p.game_seat = None
 
+    # Capture the state for the acting player NOW, before _push_game_state
+    # advances log_sent[seat] as a side-effect. If we called _public_state_for
+    # after the push task runs, new_events would already be consumed and the
+    # REST response would return an empty event list for this player.
+    my_state = _public_state_for(record, seat)
+
     # Push update to WebSocket clients (non-blocking)
     asyncio.create_task(_push_game_state(record))
 
@@ -792,7 +798,7 @@ async def submit_action(
     return ActionResponse(
         success=result.success,
         message=result.message,
-        new_state=_public_state_for(record, seat),
+        new_state=my_state,
     )
 
 

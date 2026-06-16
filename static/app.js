@@ -970,6 +970,15 @@ function initGameWs() {
 
   gameWs.onclose = () => {
     stopGamePing();
+    // Don't reconnect if we've intentionally left the game
+    if (!gameId || !playerToken) return;
+    // Reconnect after a short delay to handle transient drops
+    setTimeout(() => {
+      if (gameId && playerToken) {
+        console.log('Game WS closed unexpectedly, reconnecting...');
+        initGameWs();
+      }
+    }, 2000);
   };
 }
 
@@ -1966,15 +1975,16 @@ function returnToLobby() {
   overlay.style.display = 'none';
   delete overlay.dataset.shown;
 
-  // Close the game WS and clear game state — keep the player token
+  // Clear gameId BEFORE closing the WS so the onclose reconnect guard
+  // sees a null gameId and does not attempt to reconnect.
+  localStorage.removeItem('basic_land_game_id');
+  gameId    = null;
+
   if (gameWs) {
     gameWs.close();
     gameWs = null;
   }
   stopGamePing();
-
-  localStorage.removeItem('basic_land_game_id');
-  gameId    = null;
   gameState = null;
   selectedCardsInHand = [];
   selectedTargetCard  = null;
@@ -2037,6 +2047,10 @@ function forfeitAndExit() {
       localStorage.removeItem('basic_land_player_token');
       localStorage.removeItem('basic_land_player_id');
 
+      // Null gameId BEFORE closing the WS so the onclose reconnect guard
+      // does not attempt to re-open a connection we're intentionally dropping.
+      gameId = null;
+
       if (gameWs) {
         gameWs.close();
         gameWs = null;
@@ -2049,7 +2063,6 @@ function forfeitAndExit() {
       playerToken = null;
       playerId    = null;
       playerName  = null;
-      gameId      = null;
       gameState   = null;
 
       // Reset UI
